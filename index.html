@@ -22,6 +22,7 @@
     <h1>가지 클라우드</h1>
     <p>구글 계정으로 로그인하세요</p>
     <button id="google">구글로 로그인</button>
+    <p id="error" style="color:var(--ink-soft);margin-top:12px;min-height:1.2em"></p>
   </div>
   <script src="config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -29,11 +30,22 @@
   <script src="auth.js"></script>
   <script>
     (async () => {
-      const user = await Auth.getUser();
-      if (user) { location.href = "dashboard.html"; return; }
+      try {
+        const user = await Auth.getUser();
+        if (user) { location.href = "dashboard.html"; return; }
+      } catch (err) {
+        console.error("Failed to check user session:", err);
+      }
       document.getElementById("google").addEventListener("click", async (e) => {
         e.target.disabled = true;
-        await Auth.signInWithGoogle();
+        document.getElementById("error").textContent = "";
+        try {
+          await Auth.signInWithGoogle();
+        } catch (err) {
+          console.error("Google sign-in failed:", err);
+          e.target.disabled = false;
+          document.getElementById("error").textContent = "로그인에 실패했습니다. 다시 시도해 주세요.";
+        }
       });
     })();
   </script>
