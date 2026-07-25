@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>가지 클라우드 — 로그인</title>
+<style>
+  :root{ --paper:#ECEEE8; --ink:#1B2029; --ink-soft:#5C6570; --focus:#2E6FD9; }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;background:var(--paper);color:var(--ink)}
+  .card{text-align:center;padding:40px 36px;border-radius:16px;background:#fff;box-shadow:0 8px 24px rgba(27,32,41,.12)}
+  h1{margin:0 0 6px;font-size:22px}
+  p{margin:0 0 24px;color:var(--ink-soft);font-size:14px}
+  button{appearance:none;border:0;border-radius:10px;background:var(--focus);color:#fff;
+    font:600 14px system-ui;padding:12px 22px;cursor:pointer}
+  button:disabled{opacity:.6;cursor:default}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>가지 클라우드</h1>
+    <p>구글 계정으로 로그인하세요</p>
+    <button id="google">구글로 로그인</button>
+  </div>
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="supabase-client.js"></script>
+  <script src="auth.js"></script>
+  <script>
+    (async () => {
+      const user = await Auth.getUser();
+      if (user) { location.href = "dashboard.html"; return; }
+      document.getElementById("google").addEventListener("click", async (e) => {
+        e.target.disabled = true;
+        await Auth.signInWithGoogle();
+      });
+    })();
+  </script>
+</body>
+</html>
