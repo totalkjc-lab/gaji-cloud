@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>가지 클라우드 — 내 맵</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+  :root{ --paper:#ECEEE8; --ink:#1B2029; --ink-soft:#5C6570; --line:#DCE0D6; --focus:#2E6FD9; }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--paper);color:var(--ink);
+    font-family:"Pretendard Variable",Pretendard,system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:20px 24px;border-bottom:1px solid var(--line)}
+  header h1{font-size:18px;margin:0;flex:1}
+  #who{font-size:13px;color:var(--ink-soft)}
+  #readonly-badge{display:none;font:600 12px system-ui;color:#fff;background:#8358CE;padding:4px 10px;border-radius:20px}
+  #owner-controls{display:none;align-items:center;gap:10px;padding:16px 24px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  #owner-controls label{display:flex;align-items:center;gap:6px;font-size:13px}
+  #share-link{font:12px ui-monospace,monospace;padding:6px 8px;border:1px solid var(--line);border-radius:6px;width:280px;max-width:60vw}
+  button{appearance:none;border:0;border-radius:8px;background:var(--ink);color:var(--paper);
+    font:600 13px system-ui;padding:8px 14px;cursor:pointer}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  #list{display:grid;gap:10px;padding:20px 24px;max-width:640px}
+  .item{display:block;padding:14px 16px;border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(27,32,41,.08);
+    text-decoration:none;color:var(--ink)}
+  .item .nm{font-weight:700;font-size:14px}
+  .item .sub{font-size:12px;color:var(--ink-soft);margin-top:4px}
+  .empty{padding:24px;text-align:center;color:var(--ink-soft);font-size:13px}
+</style>
+</head>
+<body>
+  <header>
+    <h1>가지 클라우드</h1>
+    <span id="readonly-badge">읽기 전용 — 공개 폴더</span>
+    <span id="who"></span>
+    <button class="ghost" id="logout">로그아웃</button>
+  </header>
+  <div id="owner-controls">
+    <label><input type="checkbox" id="public-toggle"> 이 폴더 공개</label>
+    <input id="share-link" readonly>
+    <button id="newmap">+ 새로 만들기</button>
+  </div>
+  <div id="list"></div>
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="supabase-client.js"></script>
+  <script src="auth.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
