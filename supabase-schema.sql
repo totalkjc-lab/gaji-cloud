@@ -70,3 +70,9 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- backfill: provision folders for any user who signed in before this schema
+-- was run (the trigger above only fires for new signups). Idempotent, so
+-- running this script multiple times / in any order is always safe.
+insert into public.folders (owner_id) select id from auth.users
+  on conflict (owner_id) do nothing;

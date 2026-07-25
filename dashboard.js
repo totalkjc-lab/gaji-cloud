@@ -42,7 +42,16 @@
 
     $("#public-toggle").checked = !!folder.is_public;
     $("#public-toggle").addEventListener("change", async (e) => {
-      await sb.from("folders").update({ is_public: e.target.checked }).eq("id", folder.id);
+      const checked = e.target.checked;
+      const { data, error } = await sb
+        .from("folders")
+        .update({ is_public: checked })
+        .eq("id", folder.id)
+        .select("is_public");
+      if (error || !data || !data.length) {
+        e.target.checked = !checked;
+        alert("설정을 저장하지 못했습니다. 다시 로그인해 주세요.");
+      }
     });
     $("#share-link").value = `${location.origin}/dashboard.html?folder=${folder.id}`;
 

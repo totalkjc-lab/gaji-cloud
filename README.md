@@ -14,9 +14,10 @@ Google 로그인 + Supabase로 저장되는 다중 사용자 마인드맵. 빌�
 ## 2. Google OAuth 클라이언트
 
 1. https://console.cloud.google.com → 프로젝트 생성 → APIs & Services → Credentials
-2. "Create Credentials" → "OAuth client ID" → Application type: Web application
-3. Authorized redirect URIs에 Supabase가 알려주는 콜백 URL 추가 (Supabase Authentication → Providers → Google 화면에 표시됨, `https://<project>.supabase.co/auth/v1/callback` 형태)
-4. 발급된 Client ID/Secret을 Supabase Google Provider 설정에 입력하고 저장
+2. 좌측 메뉴 "OAuth consent screen"으로 이동 → User Type: External 선택 → 앱 이름과 사용자 지원 이메일을 입력하고 저장 (게시 상태가 "Testing"인 동안은 "Test users"에 로그인에 사용할 본인 구글 계정을 추가해야 로그인이 됩니다)
+3. "Credentials" → "Create Credentials" → "OAuth client ID" → Application type: Web application
+4. Authorized redirect URIs에 Supabase가 알려주는 콜백 URL 추가 (Supabase Authentication → Providers → Google 화면에 표시됨, `https://<project>.supabase.co/auth/v1/callback` 형태)
+5. 발급된 Client ID/Secret을 Supabase Google Provider 설정에 입력하고 저장
 
 ## 3. config.js 채우기
 
@@ -28,6 +29,8 @@ window.GAJI_CONFIG = {
   supabaseAnonKey: "eyJhbGciOi..."
 };
 ```
+
+참고: `index.html`을 더블클릭해서 `file://`로 여는 방식은 구글 로그인이 동작하지 않습니다 (`location.origin`이 깨져서 redirectTo가 잘못 설정됨). 로컬에서 확인하려면 이 폴더에서 `npx serve` 같은 http 서버로 띄운 뒤 `http://localhost:3000`으로 접속하세요.
 
 ## 4. Vercel 배포
 
@@ -43,6 +46,7 @@ window.GAJI_CONFIG = {
 - [ ] 대시보드에서 "새로 만들기" → 편집기로 이동해 노드 추가/수정 후 몇 초 뒤 "저장됨"으로 바뀌는지
 - [ ] 새로고침해도 방금 만든 맵이 그대로 남아있는지 (Supabase에서 실제로 로드되는지)
 - [ ] 대시보드에서 "이 폴더 공개"를 켜고, 공유 링크를 시크릿창(로그아웃 상태)으로 열어 목록이 보이는지
+  - 참고: "공개"는 링크를 아는 사람만 볼 수 있다는 뜻이 아닙니다. anon key로 Supabase REST API를 직접 호출하면 공개 폴더 목록 전체를 조회할 수 있으므로, 정말 비공개여야 하는 맵은 공개로 전환하지 마세요.
 - [ ] 공개 목록에서 맵을 열었을 때 "읽기 전용" 배지가 뜨고 추가/삭제/색상/드래그가 안 되는지
 - [ ] "공개"를 다시 끈 뒤 같은 시크릿창에서 새로고침하면 "폴더를 찾을 수 없거나 비공개입니다"가 뜨는지
 - [ ] 예전 Claude 아티팩트 버전에서 "사본 저장"으로 받은 .json을 새 편집기의 "파일 열기"로 불러왔을 때 정상적으로 맵이 대체되는지

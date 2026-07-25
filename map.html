@@ -126,24 +126,12 @@
   .sheet .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-line)}
   .sheet .row .spacer{flex:1}
 
-  #liblist{overflow:auto;margin:14px -6px 0;padding:0 6px;flex:1;min-height:80px}
-  .item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:11px;cursor:pointer;
-    border:1px solid transparent}
-  .item:hover{background:rgba(127,140,160,.12)}
-  .item.cur{border-color:var(--focus);background:rgba(46,111,217,.08)}
-  .item .dot{width:8px;height:8px;border-radius:50%;flex:none}
-  .item .meta{flex:1;min-width:0}
-  .item .nm{font-size:14px;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .item .sub{font:500 11px/1.4 var(--mono);color:var(--ink-soft);margin-top:3px}
-  .item .acts{display:flex;gap:2px;opacity:0;flex:none}
-  .item:hover .acts,.item.cur .acts{opacity:1}
-  .item .acts .btn{padding:5px 8px;font-size:12px}
-  .empty{padding:26px 12px;text-align:center;font-size:13px;color:var(--ink-soft)}
-
   #help table{width:100%;border-collapse:collapse;font-size:13px}
   #help td{padding:6px 0;vertical-align:middle}
   #help td:first-child{width:130px}
   #help .body{overflow:auto}
+
+  body.readonly #hint{display:none}
 
   @media (max-width:760px){
     #hint{display:none}
@@ -241,6 +229,9 @@
 const PALETTE = ["#D6455C","#E2841F","#2FA37A","#2E6FD9","#8358CE","#C0357E","#0E9BA6","#7A8B2E"];
 const ROOT_INK = "#232B36";
 const HGAP = 58, VGAP = 14, MAXW = 200;
+// layout scratch fields stamped onto nodes by measure()/place(); never persist these
+const SKIP = new Set(["_lines","_st","w","h","cx","cy","dir"]);
+function stripSer(obj, indent){ return JSON.stringify(obj, (k,v) => SKIP.has(k) ? undefined : v, indent); }
 const stage = document.getElementById("stage");
 const world = document.getElementById("world");
 const svg   = document.getElementById("edges");
@@ -252,7 +243,7 @@ function mk(text, color){ return { id:nid(), text, children:[], collapsed:false,
 
 /* ===================== 상태 ===================== */
 const mapId = new URLSearchParams(location.search).get("id");
-let ownerId = null, readOnly = true;
+let ownerId = null, folderId = null, readOnly = true;
 let root = null;
 let selected = null;
 let editing = null;
@@ -271,9 +262,13 @@ async function loadMap(){
   }
   const { data: mapRow, error } = await sb.from("maps").select("id,folder_id,title,data,updated_at").eq("id", mapId).single();
   if(error || !mapRow){
-    document.body.innerHTML = '<p style="padding:40px;font:15px system-ui">맵을 찾을 수 없거나 접근 권한이 없습니다. <a href="dashboard.html">대시보드로</a></p>';
+    const user = await Auth.getUser();
+    document.body.innerHTML = user
+      ? '<p style="padding:40px;font:15px system-ui">맵을 찾을 수 없거나 접근 권한이 없습니다. <a href="dashboard.html">대시보드로</a></p>'
+      : '<p style="padding:40px;font:15px system-ui">로그인이 필요합니다. <a href="index.html">로그인하러 가기</a></p>';
     throw new Error("not found");
   }
+  folderId = mapRow.folder_id;
   const { data: folder } = await sb.from("folders").select("owner_id").eq("id", mapRow.folder_id).single();
   ownerId = folder ? folder.owner_id : null;
   const user = await Auth.getUser();
@@ -281,10 +276,15 @@ async function loadMap(){
   root = mapRow.data;
   reindex(root);
   selected = root.id;
+  // seed the dedupe baseline with what's already on disk (layout fields are
+  // stripped either way) so merely opening the map — with no edits — doesn't
+  // itself trigger a save once layout()/fonts.ready re-stamp w/h/cx/cy.
+  lastSer = stripSer(root);
   if(readOnly) applyReadOnly();
 }
 function applyReadOnly(){
   document.body.classList.add("readonly");
+  $("#status").textContent = "";
   ["child","sibling","color","del","undo","import"].forEach(act => {
     const b = document.querySelector(`[data-act="${act}"]`);
     if(b) b.style.display = "none";
@@ -485,17 +485,24 @@ function stamp(d){
 }
 function persist(){
   if(readOnly) return;
-  const ser = JSON.stringify(root);
+  const ser = stripSer(root);
   if(ser === lastSer) return;
   lastSer = ser;
   setStatus("저장 중…","saving");
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    const { error } = await sb.from("maps")
-      .update({ title: mapTitle(), data: root, updated_at: new Date().toISOString() })
-      .eq("id", mapId);
-    lastSaved = new Date();
-    setStatus(error ? "자동 저장 꺼짐" : "저장됨 · " + stamp(lastSaved), error ? "off" : "");
+    const { data, error } = await sb.from("maps")
+      .update({ title: mapTitle(), data: JSON.parse(ser), updated_at: new Date().toISOString() })
+      .eq("id", mapId)
+      .select("id");
+    const ok = !error && Array.isArray(data) && data.length > 0;
+    if(ok){
+      lastSaved = new Date();
+      setStatus("저장됨 · " + stamp(lastSaved), "");
+    } else {
+      lastSer = null;
+      setStatus("저장 안 됨 — 다시 로그인하세요", "off");
+    }
   }, 600);
 }
 
@@ -806,7 +813,7 @@ function download(name, blob){
 function safeName(s){ return String(s).replace(/[\\/:*?"<>|\n]/g,"_").slice(0,60).trim() || "마인드맵"; }
 function exportJSON(){
   download(safeName(mapTitle())+".json",
-    new Blob([JSON.stringify({app:"gaji",v:2,root},null,2)],{type:"application/json"}));
+    new Blob([stripSer({app:"gaji",v:2,root},2)],{type:"application/json"}));
   toast("사본을 내려받았습니다");
 }
 function importFile(){ if(readOnly) return; $("#file").click(); }
@@ -906,7 +913,9 @@ document.body.addEventListener("click", e => {
   else if(a==="zout") zoomAt(1/1.15, innerWidth/2, innerHeight/2);
   else if(a==="help") $("#help").classList.add("open");
 });
-$("#docname").addEventListener("click", () => { location.href = "dashboard.html"; });
+$("#docname").addEventListener("click", () => {
+  location.href = (readOnly && folderId) ? `dashboard.html?folder=${folderId}` : "dashboard.html";
+});
 document.querySelectorAll(".sheet").forEach(s => {
   s.addEventListener("click", e => { if(e.target === s) closeSheets(); });
 });
