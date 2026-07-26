@@ -663,15 +663,32 @@ function startEdit(){
   el.style.width = "auto"; el.style.minWidth = MAXW+"px"; el.style.height = "auto";
   el.style.userSelect = "text"; el.style.webkitUserSelect = "text"; el.style.caretColor = "var(--focus)";
   el.textContent = n.text;
-  const selectAll = () => {
+
+  /* 전체 선택은 편집 진입 때 딱 한 번만 한다.
+     입력이 한 글자라도 들어온 뒤에 다시 선택하면 그 글자까지 선택 범위에 들어가고,
+     다음 글자가 선택을 replace 하면서 앞서 입력한 내용이 통째로 사라진다.
+     (더블클릭은 pointerdown 처리 중에 startEdit을 부르는데, 브라우저 기본 포커스
+     이동이 그 뒤에 일어나 포커스를 놓칠 수 있다. 그 보정 때문에 아래 한 프레임 뒤
+     재시도가 필요하지만, 그때는 선택 범위를 절대 건드리지 않는다.) */
+  let dirty = false;                       // 입력·조합이 시작되면 다시는 선택을 손대지 않는다
+  const disarm = () => { dirty = true; };
+  el.addEventListener("beforeinput", disarm);
+  el.addEventListener("input", disarm);
+  el.addEventListener("compositionstart", disarm);   // 한글 IME 보호
+  el._disarm = disarm;                     // commitEdit에서 리스너를 떼기 위해 보관
+
+  try{
     el.focus();
-    try{
-      const r = document.createRange(); r.selectNodeContents(el);
-      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
-    }catch{}
-  };
-  selectAll();
-  requestAnimationFrame(() => { if(editing === n.id && document.activeElement !== el) selectAll(); });
+    const r = document.createRange(); r.selectNodeContents(el);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  }catch{}
+
+  requestAnimationFrame(() => {
+    // 포커스만 되찾는다. 선택 범위는 그대로 둔다.
+    if(editing === n.id && !dirty && document.activeElement !== el){
+      try{ el.focus({ preventScroll:true }); }catch{ el.focus(); }
+    }
+  });
   showBadge(n);
 }
 function commitEdit(save=true){
@@ -682,6 +699,13 @@ function commitEdit(save=true){
     if(save && n) n.text = el.textContent.replace(/\u00a0/g," ").trim() || "빈 주제";
     el.contentEditable = "false"; el.style.minWidth = "";
     el.style.userSelect = ""; el.style.webkitUserSelect = ""; el.style.caretColor = "";
+    // 노드 요소는 재사용되므로(nodeEls 캐시) 편집을 끝낼 때 리스너를 떼어 둔다.
+    if(el._disarm){
+      el.removeEventListener("beforeinput", el._disarm);
+      el.removeEventListener("input", el._disarm);
+      el.removeEventListener("compositionstart", el._disarm);
+      el._disarm = null;
+    }
   }
   render();
 }
