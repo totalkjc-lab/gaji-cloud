@@ -181,7 +181,8 @@
   <h1>가지<span class="ver">v5</span></h1>
   <div class="rule"></div>
   <button id="docname" title="대시보드로">맵</button>
-  <span id="status">저장됨</span>
+  <span id="status"></span>
+  <button class="btn danger" id="retry" hidden>다시 저장</button>
 </div>
 
 <div id="bar" class="panel">
@@ -347,10 +348,10 @@ async function loadMap(){
   root = mapRow.data;
   reindex(root);
   selected = root.id;
-  // seed the dedupe baseline with what's already on disk (layout fields are
-  // stripped either way) so merely opening the map — with no edits — doesn't
-  // itself trigger a save once layout()/fonts.ready re-stamp w/h/cx/cy.
-  lastSer = stripSer(root);
+  // 방금 서버에서 받은 값이 곧 「저장된 값」이다. 이 기준이 있어야 맵을 열기만
+  // 해도(폰트 로드 후 재측정으로 w/h가 바뀌며) 저장이 걸리는 일이 없다.
+  savedSer = stripSer(root);
+  failedEarlier = hadFail();   // 지난번 탭을 닫을 때 저장이 실패했는가
   if(readOnly) applyReadOnly();
 }
 /* 버튼을 숨기면 구분선만 남아 겹쳐 보일 수 있어, 보이는 버튼 사이에 있지 않은
@@ -558,8 +559,16 @@ function clearNodes(){
   nodeEls.clear();
 }
 
-/* ===================== 자동 저장 ===================== */
-let saveTimer = null, lastSaved = null, lastSer = null;
+/* ===================== 자동 저장 =====================
+   원칙: 서버가 갱신을 확인해 주기 전에는 절대 「저장됨」이라고 쓰지 않는다.
+   savedSer  = 서버에 확실히 들어간 값
+   pendingSer= 아직 확인되지 않은 값 (null이면 미저장 변경이 없음)            */
+const SAVE_DELAY = 600;
+let saveTimer = null, lastSaved = null;
+let savedSer = null, pendingSer = null;
+let saving = false, failedNow = false, failedEarlier = false;
+
+function unsaved(){ return pendingSer !== null; }
 function setStatus(text, cls){
   const s = $("#status");
   s.textContent = text; s.className = cls || "";
@@ -568,27 +577,80 @@ function stamp(d){
   const h = d.getHours(), m = String(d.getMinutes()).padStart(2,"0");
   return `${h<12?"오전":"오후"} ${((h+11)%12)+1}:${m}`;
 }
+
+/* 탭이 닫히는 순간의 저장이 실패하면 아무도 모른 채 사라진다. 표식을 남겨
+   두었다가, 다시 열었을 때 실패를 그대로 보여준다. */
+function failKey(){ return "gaji:savefail:" + mapId; }
+function markFail(){ try{ localStorage.setItem(failKey(), String(Date.now())); }catch{} }
+function clearFail(){ try{ localStorage.removeItem(failKey()); }catch{} }
+function hadFail(){ try{ return !!localStorage.getItem(failKey()); }catch{ return false; } }
+
+function renderStatus(){
+  if(readOnly) return;
+  const retry = $("#retry");
+  if(retry){
+    retry.hidden = !(failedNow || failedEarlier);
+    // 보낼 것이 남아 있으면 다시 보내고, 지난 실패를 알리기만 하는 경우엔 확인만 받는다
+    retry.textContent = unsaved() ? "다시 저장" : "확인";
+  }
+  if(failedNow)          setStatus("저장 실패", "off");
+  else if(failedEarlier) setStatus("지난 저장 실패 — 그때 고친 내용이 빠졌을 수 있습니다", "off");
+  else if(saving)        setStatus("저장 중…", "saving");
+  else if(unsaved())     setStatus("저장 대기", "");
+  // 미저장 변경이 없다 = 서버 내용과 같다. 이번 세션에 저장한 적이 없으면
+  // (막 열었을 때) 시각 없이 「저장됨」만 쓴다.
+  else                   setStatus(lastSaved ? "저장됨 · " + stamp(lastSaved) : "저장됨", "");
+}
+
+/* 편집 중인 글자는 DOM에만 있다. 모델로 흘려보내 저장 경로에 태운다.
+   render()는 부르지 않는다 — 입력 중 재배치가 일어나면 커서가 튄다. */
+function syncEditingToModel(){
+  if(!editing) return;
+  const n = find(editing), el = nodeEls.get(editing);
+  if(n && el) n.text = el.textContent.replace(/\u00a0/g, " ");   // trim은 커밋 때만
+}
+
 function persist(){
   if(readOnly) return;
+  // ponytail: 글자 하나마다 트리 전체를 직렬화한다. 이 비교가 있어야 선택만
+  // 옮겼을 때 「저장 대기」가 헛되게 뜨지 않는다. 맵이 수천 노드로 커지면
+  // 편집 중인 노드만 비교하는 쪽으로 바꿀 것.
   const ser = stripSer(root);
-  if(ser === lastSer) return;
-  lastSer = ser;
-  setStatus("저장 중…","saving");
+  if(ser === savedSer){ pendingSer = null; renderStatus(); return; }
+  pendingSer = ser;
+  renderStatus();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
+  saveTimer = setTimeout(flush, SAVE_DELAY);
+}
+
+async function flush(){
+  if(readOnly || saving || pendingSer === null) return;
+  clearTimeout(saveTimer);
+  const ser = pendingSer;
+  saving = true; failedNow = false; renderStatus();
+  let ok = false;
+  try{
     const { data, error } = await sb.from("maps")
       .update({ title: mapTitle(), data: JSON.parse(ser), updated_at: new Date().toISOString() })
       .eq("id", mapId)
       .select("id");
-    const ok = !error && Array.isArray(data) && data.length > 0;
-    if(ok){
-      lastSaved = new Date();
-      setStatus("저장됨 · " + stamp(lastSaved), "");
-    } else {
-      lastSer = null;
-      setStatus("저장 안 됨 — 다시 로그인하세요", "off");
-    }
-  }, 600);
+    ok = !error && Array.isArray(data) && data.length > 0;
+  }catch{ ok = false; }
+  saving = false;
+  if(ok){
+    savedSer = ser;
+    if(pendingSer === ser) pendingSer = null;   // 저장 중 또 고쳤으면 남겨 둔다
+    lastSaved = new Date();
+    failedNow = false;
+    // 지난 세션의 실패는 저장이 성공했다고 사라지면 안 된다. 그때 잃은 내용은
+    // 여전히 잃은 채이므로, 사용자가 「확인」을 누를 때까지 알림을 유지한다.
+    if(!failedEarlier) clearFail();
+    renderStatus();
+    if(unsaved()){ clearTimeout(saveTimer); saveTimer = setTimeout(flush, SAVE_DELAY); }
+  } else {
+    failedNow = true; markFail();
+    renderStatus();
+  }
 }
 
 /* ===================== 되돌리기 ===================== */
@@ -672,10 +734,14 @@ function startEdit(){
      재시도가 필요하지만, 그때는 선택 범위를 절대 건드리지 않는다.) */
   let dirty = false;                       // 입력·조합이 시작되면 다시는 선택을 손대지 않는다
   const disarm = () => { dirty = true; };
+  // 입력이 들어올 때마다 모델에 반영하고 저장을 예약한다. 이렇게 해야 Enter를
+  // 누르기 전에 창을 닫아도 글자가 남는다. render()는 부르지 않는다.
+  const onInput = () => { dirty = true; syncEditingToModel(); persist(); };
   el.addEventListener("beforeinput", disarm);
-  el.addEventListener("input", disarm);
+  el.addEventListener("input", onInput);
   el.addEventListener("compositionstart", disarm);   // 한글 IME 보호
-  el._disarm = disarm;                     // commitEdit에서 리스너를 떼기 위해 보관
+  el._disarm = disarm; el._onInput = onInput;        // commitEdit에서 떼기 위해 보관
+  el._original = n.text;                             // Esc 취소 때 되돌릴 값
 
   try{
     el.focus();
@@ -696,16 +762,22 @@ function commitEdit(save=true){
   const n = find(editing), el = nodeEls.get(editing);
   editing = null; hideBadge();
   if(el){
-    if(save && n) n.text = el.textContent.replace(/\u00a0/g," ").trim() || "빈 주제";
+    if(n){
+      // 입력 중 이미 모델·서버로 흘러갔으므로, 취소는 보관해 둔 원래 값으로
+      // 되돌리는 것을 뜻한다. 아래 render()가 그 되돌림까지 저장한다.
+      if(save) n.text = el.textContent.replace(/\u00a0/g," ").trim() || "빈 주제";
+      else if(el._original !== undefined) n.text = el._original;
+    }
     el.contentEditable = "false"; el.style.minWidth = "";
     el.style.userSelect = ""; el.style.webkitUserSelect = ""; el.style.caretColor = "";
     // 노드 요소는 재사용되므로(nodeEls 캐시) 편집을 끝낼 때 리스너를 떼어 둔다.
     if(el._disarm){
       el.removeEventListener("beforeinput", el._disarm);
-      el.removeEventListener("input", el._disarm);
       el.removeEventListener("compositionstart", el._disarm);
       el._disarm = null;
     }
+    if(el._onInput){ el.removeEventListener("input", el._onInput); el._onInput = null; }
+    delete el._original;
   }
   render();
 }
@@ -1084,6 +1156,35 @@ addEventListener("resize", () => {
   view.x = innerWidth/2  - anchor.x*view.z;
   view.y = innerHeight/2 - anchor.y*view.z;
   applyView();
+});
+
+/* ===================== 저장 안 된 채 떠나는 것 막기 =====================
+   확인창은 최후의 방어다. 그보다 먼저, 탭이 숨는 순간 디바운스를 건너뛰고
+   실제로 저장을 끝내려 시도한다. 휴대폰에서는 beforeunload가 아예 동작하지
+   않는 경우가 많아 이쪽이 유일한 방어다. */
+$("#retry").addEventListener("click", () => {
+  const hadPending = unsaved();
+  failedNow = false;
+  failedEarlier = false;   // 사용자가 알림을 확인했다
+  clearFail();
+  if(hadPending) flush(); else renderStatus();
+});
+
+addEventListener("beforeunload", e => {
+  if(readOnly) return;
+  syncEditingToModel();
+  if(editing) persist();          // 입력 중이던 글자를 저장 대기열에 올린다
+  if(unsaved() || saving){
+    e.preventDefault();
+    e.returnValue = "";           // 문구는 브라우저가 정한다 (커스터마이즈 불가)
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if(document.visibilityState !== "hidden" || readOnly) return;
+  syncEditingToModel();
+  if(editing) persist();
+  if(unsaved()) flush();          // 600ms를 기다리지 않고 바로 보낸다
 });
 
 /* ===================== 시작 ===================== */
