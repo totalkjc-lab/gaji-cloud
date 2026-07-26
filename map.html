@@ -13,20 +13,21 @@
 <script src="permissions.js"></script>
 <style>
   :root{
-    --paper:#ECEEE8; --grid:#DCE0D6; --ink:#1B2029; --ink-soft:#5C6570;
-    --chip:#FFFFFF; --chip-line:#C9CFC2;
-    --panel:rgba(255,255,255,.82); --panel-line:rgba(27,32,41,.12);
-    --shadow:0 1px 2px rgba(27,32,41,.10), 0 8px 24px rgba(27,32,41,.07);
-    --focus:#2E6FD9; --ok:#2FA37A; --edit-bg:#DCE8FB;
-    --font:"Pretendard Variable",Pretendard,system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    --paper:#F5F5F7; --grid:#E4E4E9; --ink:#1D1D1F; --ink-soft:#6E6E73;
+    --chip:#FFFFFF; --chip-line:#E3E3E8;
+    --panel:rgba(250,250,252,.72); --panel-line:rgba(0,0,0,.08);
+    --shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 28px rgba(0,0,0,.08);
+    --focus:#0071E3; --ok:#34C759; --edit-bg:#D8E9FF;
+    --ease:cubic-bezier(.25,.1,.25,1);
+    --font:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
   }
   body.dark{
-    --paper:#12171D; --grid:#1B222A; --ink:#E7EBF0; --ink-soft:#8C97A4;
-    --chip:#1A212A; --chip-line:#2C3743;
-    --panel:rgba(24,30,38,.86); --panel-line:rgba(231,235,240,.14);
-    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
-    --focus:#6AA0FF; --edit-bg:#1E3050;
+    --paper:#000000; --grid:#1C1C1E; --ink:#F5F5F7; --ink-soft:#98989D;
+    --chip:#1C1C1E; --chip-line:#2C2C2E;
+    --panel:rgba(28,28,30,.72); --panel-line:rgba(255,255,255,.12);
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 34px rgba(0,0,0,.5);
+    --focus:#0A84FF; --ok:#30D158; --edit-bg:#0A3055;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -67,8 +68,9 @@
     justify-content:center;font:600 10px/1 var(--mono);color:#fff;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25)}
   .toggle:hover{transform:scale(1.15)}
 
-  .panel{position:fixed;z-index:10;background:var(--panel);backdrop-filter:blur(14px);
-    -webkit-backdrop-filter:blur(14px);border:1px solid var(--panel-line);border-radius:14px;box-shadow:var(--shadow)}
+  .panel{position:fixed;z-index:10;background:var(--panel);
+    backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+    border:1px solid var(--panel-line);border-radius:16px;box-shadow:var(--shadow)}
 
   #brand{left:20px;top:18px;padding:10px 12px 10px 16px;display:flex;align-items:center;gap:12px;max-width:calc(100vw - 40px)}
   #brand h1{margin:0;font-size:16px;font-weight:800;letter-spacing:-.02em;flex:none;display:flex;align-items:baseline;gap:5px}
@@ -77,22 +79,26 @@
   #docname{appearance:none;border:0;background:transparent;color:var(--ink);cursor:pointer;
     font-family:var(--font);font-size:14px;font-weight:600;letter-spacing:-.01em;padding:5px 9px;border-radius:8px;
     max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:7px}
-  #docname:hover{background:rgba(127,140,160,.16)}
-  #docname::after{content:"⌄";font-size:12px;color:var(--ink-soft);position:relative;top:-2px}
+  #docname:hover{background:color-mix(in srgb,var(--ink) 8%,transparent)}
   #status{font:500 11px/1 var(--mono);color:var(--ink-soft);white-space:nowrap;flex:none}
   #status.saving{color:var(--focus)}
   #status.off{color:#D6455C}
 
-  #bar{left:20px;top:76px;padding:7px;display:flex;gap:4px;flex-wrap:wrap;max-width:min(760px,calc(100vw - 40px))}
+  #bar{left:20px;top:78px;padding:7px;display:flex;gap:2px;flex-wrap:wrap;max-width:min(1160px,calc(100vw - 40px))}
   .btn{appearance:none;border:0;background:transparent;color:var(--ink);font-family:var(--font);font-size:13px;
-    font-weight:600;letter-spacing:-.01em;padding:7px 11px;border-radius:9px;cursor:pointer;white-space:nowrap}
-  .btn:hover{background:rgba(127,140,160,.16)}
-  .btn:active{transform:translateY(1px)}
-  .btn:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+    font-weight:600;letter-spacing:-.01em;padding:7px 10px;border-radius:10px;cursor:pointer;white-space:nowrap;
+    display:inline-flex;align-items:center;gap:6px;transition:background .16s var(--ease),transform .16s var(--ease)}
+  .btn svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;
+    stroke-linecap:round;stroke-linejoin:round}
+  .btn:hover{background:color-mix(in srgb,var(--ink) 8%,transparent)}
+  .btn:active{transform:scale(.96)}
+  .btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
   .btn.on{background:var(--ok);color:#fff}
   .btn.primary{background:var(--ink);color:var(--paper)}
-  .btn.danger:hover{background:rgba(214,69,92,.16);color:#D6455C}
-  .sep{width:1px;background:var(--panel-line);margin:4px 3px}
+  .btn.accent{background:var(--focus);color:#fff}
+  .btn.accent:hover{background:var(--focus);opacity:.88}
+  .btn.danger:hover{background:color-mix(in srgb,#FF3B30 16%,transparent);color:#FF3B30}
+  .sep{width:1px;background:var(--panel-line);margin:5px 4px;flex:none}
 
   #zoom{right:20px;bottom:20px;padding:6px;display:flex;align-items:center;gap:2px}
   #zoom .btn{padding:6px 9px;font-family:var(--mono);font-size:13px}
@@ -133,12 +139,36 @@
 
   body.readonly #hint{display:none}
 
-  @media (max-width:760px){
+  /* ---------- 창 크기별 배치 ----------
+     넓은 화면: 브랜드·도구모음 좌상단, 힌트 좌하단, 확대축소 우하단.
+     중간 화면: 힌트를 접어 캔버스를 넓힙니다.
+     좁은 화면: 도구모음을 하단 가로 스크롤 막대로 내리고 글자를 접어 아이콘만 남깁니다. */
+  @media (max-width:1180px){
     #hint{display:none}
-    #docname{max-width:150px}
-    #status{display:none}
+    #bar{max-width:calc(100vw - 40px)}
   }
-  @media (prefers-reduced-motion:reduce){*{transition:none!important}.node.editing{animation:none}}
+  @media (max-width:860px){
+    #brand{left:10px;right:10px;top:10px;max-width:none;padding:9px 12px}
+    #bar{left:10px;right:10px;top:auto;bottom:10px;max-width:none;
+      flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
+      -webkit-overflow-scrolling:touch;scrollbar-width:none}
+    #bar::-webkit-scrollbar{display:none}
+    .btn .lbl{display:none}
+    .btn{padding:9px}
+    .btn svg{width:18px;height:18px}
+    #zoom{top:70px;bottom:auto;right:10px}
+    #toast{bottom:78px}
+  }
+  @media (max-width:560px){
+    #docname{max-width:44vw}
+    #status{display:none}
+    #brand h1 .ver{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important}
+    .node.editing{animation:none}
+    .btn:active{transform:none}
+  }
 </style>
 </head>
 <body>
@@ -155,22 +185,63 @@
 </div>
 
 <div id="bar" class="panel">
-  <button class="btn" data-act="child">+ 하위 주제</button>
-  <button class="btn" data-act="sibling">+ 형제 주제</button>
-  <button class="btn" data-act="color">색상</button>
-  <button class="btn" data-act="del">삭제</button>
+  <button class="btn" data-act="home" title="내 맵 목록으로 돌아가기">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg>
+    <span class="lbl">내 맵</span>
+  </button>
   <div class="sep"></div>
-  <button class="btn" data-act="fit">화면 맞춤</button>
-  <button class="btn" data-act="undo">되돌리기</button>
+  <button class="btn" data-act="child" title="하위 주제 추가 (Tab)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v9a4 4 0 0 0 4 4h6"/><path d="M15 14v6"/><path d="M12 17h6"/></svg>
+    <span class="lbl">하위 주제</span>
+  </button>
+  <button class="btn" data-act="sibling" title="형제 주제 추가 (Enter)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9"/><path d="M4 12h9"/><path d="M4 18h5"/><path d="M17 14v7"/><path d="M13.5 17.5h7"/></svg>
+    <span class="lbl">형제 주제</span>
+  </button>
+  <button class="btn" data-act="color" title="가지 색 바꾸기">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="5"/><circle cx="15" cy="15" r="5"/></svg>
+    <span class="lbl">색상</span>
+  </button>
+  <button class="btn danger" data-act="del" title="선택한 주제 삭제 (Delete)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l1 13h10l1-13"/></svg>
+    <span class="lbl">삭제</span>
+  </button>
   <div class="sep"></div>
-  <button class="btn" data-act="import">파일 열기</button>
-  <button class="btn" data-act="export">사본 저장</button>
+  <button class="btn" data-act="fit" title="맵 전체를 화면에 맞추기">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg>
+    <span class="lbl">화면 맞춤</span>
+  </button>
+  <button class="btn" data-act="undo" title="되돌리기 (Ctrl+Z)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h11a4.5 4.5 0 0 1 0 9h-6"/><path d="M8 5 4 9l4 4"/></svg>
+    <span class="lbl">되돌리기</span>
+  </button>
   <div class="sep"></div>
-  <button class="btn" data-act="png">이미지</button>
-  <button class="btn" data-act="md">마크다운</button>
+  <button class="btn" data-act="import" title="맵 파일(.json) 불러오기">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7l-2-2.5H5a2 2 0 0 0-2 2Z"/></svg>
+    <span class="lbl">파일 열기</span>
+  </button>
+  <button class="btn" data-act="export" title="사본을 .json 파일로 저장 (Ctrl+S)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M4 19h16"/></svg>
+    <span class="lbl">사본 저장</span>
+  </button>
   <div class="sep"></div>
-  <button class="btn" data-act="theme">야간</button>
-  <button class="btn" data-act="help">?</button>
+  <button class="btn" data-act="png" title="이미지(.png)로 내보내기">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="10" r="1.6"/><path d="M3.5 17l5-4.5 4 3.5 3-2.5 5 4"/></svg>
+    <span class="lbl">이미지</span>
+  </button>
+  <button class="btn" data-act="md" title="마크다운(.md)으로 내보내기">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h9l4 4v10a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19V6.5A1.5 1.5 0 0 1 6.5 5Z"/><path d="M14.5 5v4.5H19"/><path d="M8.5 17v-4l2 2.2 2-2.2v4"/></svg>
+    <span class="lbl">마크다운</span>
+  </button>
+  <div class="sep"></div>
+  <button class="btn" data-act="theme" title="주간·야간 모드 전환">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg>
+    <span class="lbl">야간</span>
+  </button>
+  <button class="btn" data-act="help" title="단축키 도움말">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.6 2.3c-.7.4-1.2 1-1.2 1.8v.3"/><path d="M12 17.2h.01"/></svg>
+    <span class="lbl">도움말</span>
+  </button>
 </div>
 
 <div id="palette"></div>
@@ -227,7 +298,7 @@
 
 /* ===================== 기본값 ===================== */
 const PALETTE = ["#D6455C","#E2841F","#2FA37A","#2E6FD9","#8358CE","#C0357E","#0E9BA6","#7A8B2E"];
-const ROOT_INK = "#232B36";
+const ROOT_INK = "#1D1D1F";
 const HGAP = 58, VGAP = 14, MAXW = 200;
 // layout scratch fields stamped onto nodes by measure()/place(); never persist these
 const SKIP = new Set(["_lines","_st","w","h","cx","cy","dir"]);
@@ -282,16 +353,30 @@ async function loadMap(){
   lastSer = stripSer(root);
   if(readOnly) applyReadOnly();
 }
+/* 버튼을 숨기면 구분선만 남아 겹쳐 보일 수 있어, 보이는 버튼 사이에 있지 않은
+   구분선은 접습니다. */
+function tidySeparators(){
+  const items = Array.from($("#bar").children);
+  const shown = el => el.style.display !== "none";
+  items.forEach((el, i) => {
+    if(!el.classList.contains("sep")) return;
+    const before = items.slice(0, i).some(x => !x.classList.contains("sep") && shown(x));
+    const after  = items.slice(i + 1).some(x => !x.classList.contains("sep") && shown(x));
+    const nextSepAdjacent = items.slice(i + 1).find(x => !x.classList.contains("sep") ? shown(x) : true);
+    el.style.display = (before && after && !(nextSepAdjacent && nextSepAdjacent.classList.contains("sep"))) ? "" : "none";
+  });
+}
 function applyReadOnly(){
   document.body.classList.add("readonly");
   $("#status").textContent = "";
   ["child","sibling","color","del","undo","import"].forEach(act => {
-    const b = document.querySelector(`[data-act="${act}"]`);
+    const b = document.querySelector(`#bar [data-act="${act}"]`);
     if(b) b.style.display = "none";
   });
+  tidySeparators();
   const badge = document.createElement("span");
   badge.textContent = "읽기 전용";
-  badge.style.cssText = "font:600 11px system-ui;color:#fff;background:#8358CE;padding:4px 10px;border-radius:20px;margin-left:8px";
+  badge.style.cssText = "font:600 11px var(--font);color:#fff;background:#5E5CE6;padding:4px 10px;border-radius:999px;flex:none";
   $("#status").after(badge);
 }
 
@@ -571,7 +656,10 @@ function startEdit(){
   editing = n.id;
   el.classList.add("editing");
   el.contentEditable = "true";
-  el.spellcheck = false;
+  // 오타를 브라우저 사전으로 표시합니다 — 틀린 낱말에 물결 밑줄이 그어지고,
+  // 마우스 오른쪽 클릭으로 고칠 낱말을 고를 수 있습니다.
+  el.spellcheck = true;
+  el.setAttribute("lang", "ko");
   el.style.width = "auto"; el.style.minWidth = MAXW+"px"; el.style.height = "auto";
   el.style.userSelect = "text"; el.style.webkitUserSelect = "text"; el.style.caretColor = "var(--focus)";
   el.textContent = n.text;
@@ -908,14 +996,22 @@ document.body.addEventListener("click", e => {
   else if(a==="png") exportPNG();
   else if(a==="md") exportMD();
   else if(a==="closesheet") closeSheets();
-  else if(a==="theme"){ dark = !dark; document.body.classList.toggle("dark", dark); b.textContent = dark ? "주간" : "야간"; render(); }
+  else if(a==="home") goDashboard();
+  else if(a==="theme"){
+    dark = !dark;
+    document.body.classList.toggle("dark", dark);
+    const lbl = b.querySelector(".lbl");
+    if(lbl) lbl.textContent = dark ? "주간" : "야간";   // 아이콘 SVG를 지우지 않도록 글자만 바꿉니다
+    render();
+  }
   else if(a==="zin") zoomAt(1.15, innerWidth/2, innerHeight/2);
   else if(a==="zout") zoomAt(1/1.15, innerWidth/2, innerHeight/2);
   else if(a==="help") $("#help").classList.add("open");
 });
-$("#docname").addEventListener("click", () => {
+function goDashboard(){
   location.href = (readOnly && folderId) ? `dashboard.html?folder=${folderId}` : "dashboard.html";
-});
+}
+$("#docname").addEventListener("click", goDashboard);
 document.querySelectorAll(".sheet").forEach(s => {
   s.addEventListener("click", e => { if(e.target === s) closeSheets(); });
 });
