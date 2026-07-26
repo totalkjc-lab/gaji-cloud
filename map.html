@@ -704,30 +704,62 @@ function move(dir){
   }
   if(t){ selected = t.id; render(); ensureVisible(t); }
 }
+/* 떠 있는 패널(브랜드 막대·도구모음)이 실제로 차지하는 자리를 재서, 맵이 그
+   아래로 숨지 않는 "쓸 수 있는 화면"을 돌려줍니다. 도구모음은 좁은 화면에서
+   아래로 내려가므로 위치를 보고 판단합니다. */
+function safeArea(){
+  const gap = 16, pad = innerWidth < 700 ? 20 : 44;
+  let top = pad, bottom = pad;
+  for(const sel of ["#brand", "#bar"]){
+    const el = $(sel);
+    if(!el || getComputedStyle(el).display === "none") continue;
+    const r = el.getBoundingClientRect();
+    if(!r.height) continue;
+    if(r.top + r.height/2 < innerHeight/2) top = Math.max(top, r.bottom + gap);
+    else bottom = Math.max(bottom, innerHeight - r.top + gap);
+  }
+  const left = pad, right = pad;
+  return {
+    left, top, right, bottom,
+    w: Math.max(120, innerWidth - left - right),
+    h: Math.max(120, innerHeight - top - bottom)
+  };
+}
+/* 화면(월드) 좌표 변환 도우미 */
+function screenToWorld(sx, sy){ return { x:(sx - view.x)/view.z, y:(sy - view.y)/view.z }; }
+function centerWorldOn(wx, wy){
+  const a = safeArea();
+  view.x = a.left + a.w/2 - wx*view.z;
+  view.y = a.top  + a.h/2 - wy*view.z;
+}
+
 function ensureVisible(n){
-  const sx = n.cx*view.z + view.x, sy = n.cy*view.z + view.y, m = 120;
+  const a = safeArea();
+  const sx = n.cx*view.z + view.x, sy = n.cy*view.z + view.y;
+  const mx = Math.min(120, a.w/2), my = Math.min(120, a.h/2);
   let dx=0, dy=0;
-  if(sx < m) dx = m-sx;
-  if(sx > innerWidth-m) dx = innerWidth-m-sx;
-  if(sy < m) dy = m-sy;
-  if(sy > innerHeight-m) dy = innerHeight-m-sy;
+  if(sx < a.left + mx) dx = a.left + mx - sx;
+  if(sx > a.left + a.w - mx) dx = a.left + a.w - mx - sx;
+  if(sy < a.top + my) dy = a.top + my - sy;
+  if(sy > a.top + a.h - my) dy = a.top + a.h - my - sy;
   if(dx||dy){ view.x += dx; view.y += dy; applyView(); }
 }
 
 /* ===================== 화면 ===================== */
-function fit(){
-  layout();
+function bounds(){
   let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
   (function c(n){
     minX=Math.min(minX,n.cx-n.w/2); maxX=Math.max(maxX,n.cx+n.w/2);
     minY=Math.min(minY,n.cy-n.h/2); maxY=Math.max(maxY,n.cy+n.h/2);
     if(!n.collapsed) n.children.forEach(c);
   })(root);
-  const pad = 90;
-  const z = Math.min(1.2, (innerWidth-pad*2)/(maxX-minX), (innerHeight-pad*2-100)/(maxY-minY));
-  view.z = Math.max(0.2, Math.min(2, z));
-  view.x = innerWidth/2 - ((minX+maxX)/2)*view.z;
-  view.y = (innerHeight/2+22) - ((minY+maxY)/2)*view.z;
+  return { minX, minY, maxX, maxY, w:Math.max(1,maxX-minX), h:Math.max(1,maxY-minY) };
+}
+function fit(){
+  layout();
+  const b = bounds(), a = safeArea();
+  view.z = Math.max(0.2, Math.min(2, Math.min(1.2, a.w/b.w, a.h/b.h)));
+  centerWorldOn((b.minX+b.maxX)/2, (b.minY+b.maxY)/2);
   applyView();
 }
 function zoomAt(f,px,py){
@@ -1015,7 +1047,20 @@ $("#docname").addEventListener("click", goDashboard);
 document.querySelectorAll(".sheet").forEach(s => {
   s.addEventListener("click", e => { if(e.target === s) closeSheets(); });
 });
-addEventListener("resize", applyView);
+/* 창 크기가 바뀔 때, 보고 있던 지점을 화면 가운데에 그대로 붙잡아 둡니다.
+   그렇지 않으면 화면 좌표만 유지되어 보던 내용이 화면 밖으로 밀려납니다.
+   수정 중에는 옮기지 않습니다 — 휴대폰 자판이 올라올 때도 resize가 나기 때문에,
+   그때 화면이 따라 움직이면 고치던 주제가 눈에서 사라집니다. */
+let seenW = innerWidth, seenH = innerHeight;
+addEventListener("resize", () => {
+  if(editing || (seenW === innerWidth && seenH === innerHeight)){ applyView(); return; }
+  // 줄어들기 전 창 가운데에 있던 월드 좌표를 구해, 새 창 가운데에 다시 놓습니다.
+  const anchor = screenToWorld(seenW/2, seenH/2);
+  seenW = innerWidth; seenH = innerHeight;
+  view.x = innerWidth/2  - anchor.x*view.z;
+  view.y = innerHeight/2 - anchor.y*view.z;
+  applyView();
+});
 
 /* ===================== 시작 ===================== */
 (async () => {
