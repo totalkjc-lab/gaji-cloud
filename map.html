@@ -138,6 +138,22 @@
   #ctx button .k{margin-left:auto;font:500 11px/1 var(--mono);color:var(--ink-soft)}
   #ctx hr{border:0;border-top:1px solid var(--panel-line);margin:5px 4px}
 
+  /* 검색줄은 화면 위 가운데에 겹쳐 띄운다 — 툴바를 밀어내지 않는다 */
+  #find{left:50%;top:18px;transform:translateX(-50%);z-index:35;padding:6px 6px 6px 12px;
+    display:flex;align-items:center;gap:6px;max-width:min(460px,calc(100vw - 32px))}
+  #find[hidden]{display:none}
+  #find>svg{width:16px;height:16px;flex:none;fill:none;stroke:var(--ink-soft);
+    stroke-width:1.9;stroke-linecap:round}
+  #findq{appearance:none;border:0;background:transparent;color:var(--ink);outline:none;
+    font-family:var(--font);font-size:14px;font-weight:500;letter-spacing:-.01em;
+    padding:6px 2px;min-width:0;flex:1}
+  #findq::-webkit-search-cancel-button{display:none}
+  #findn{font:500 11px/1 var(--mono);color:var(--ink-soft);white-space:nowrap;flex:none}
+  #find .btn{padding:6px 9px;font-family:var(--mono);font-size:13px}
+  /* 검색 강조는 선택(.sel)·묶음(.marked)과 겹치지 않게 별도 계열을 쓴다 */
+  .node.hit{box-shadow:0 0 0 2px var(--paper),0 0 0 4px #E2841F}
+  .node.hit.cur{box-shadow:0 0 0 2px var(--paper),0 0 0 5px #E2841F,0 8px 22px rgba(226,132,31,.35)}
+
   #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(14px);z-index:60;
     padding:9px 16px;border-radius:10px;background:var(--ink);color:var(--paper);font-size:13px;font-weight:600;
     opacity:0;pointer-events:none;transition:all .22s ease;max-width:min(420px,calc(100vw - 40px));text-align:center}
@@ -206,6 +222,15 @@
   <button id="docname" title="대시보드로">맵</button>
   <span id="status"></span>
   <button class="btn danger" id="retry" hidden>다시 저장</button>
+</div>
+
+<div id="find" class="panel" hidden>
+  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+  <input id="findq" type="search" placeholder="주제 찾기" autocomplete="off" spellcheck="false" aria-label="주제 찾기">
+  <span id="findn"></span>
+  <button class="btn" id="findprev" title="이전 (Shift+Enter)">↑</button>
+  <button class="btn" id="findnext" title="다음 (Enter)">↓</button>
+  <button class="btn" id="findx" title="닫기 (Esc)">✕</button>
 </div>
 
 <div id="bar" class="panel">
@@ -611,7 +636,8 @@ function render(){
     }
     const col = branchColor(n);
     el.className = "node " + n._st.cls + (n.id===selected ? " sel" : "") + (n.id===editing ? " editing" : "")
-                 + (marked.has(n.id) ? " marked" : "");
+                 + (marked.has(n.id) ? " marked" : "")
+                 + (hits.includes(n.id) ? (n.id === hits[hitAt] ? " hit cur" : " hit") : "");
     el.style.left = (n.cx-n.w/2)+"px"; el.style.top = (n.cy-n.h/2)+"px";
     // 편집 중인 노드도 다른 노드와 똑같은 크기로 잡는다. 예외를 두면 그 칸만
     // 레이아웃 밖으로 자라나 옆 노드를 덮는다.
@@ -1170,6 +1196,8 @@ stage.addEventListener("touchend", () => { pinch = null; }, {passive:true});
 
 /* ===================== 키보드 ===================== */
 addEventListener("keydown", e => {
+  // 검색창 안에서 친 글자가 맵 단축키로 새 나가면 안 된다 (「선택 후 타이핑」이 걸린다)
+  if(e.target && e.target.closest && e.target.closest("#find")) return;
   if(readOnly && !["ArrowRight","ArrowLeft","ArrowUp","ArrowDown","Escape"," "].includes(e.key)
      && !((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="s")) return;
   if(editing){
@@ -1182,7 +1210,8 @@ addEventListener("keydown", e => {
   const k = e.key;
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="z"){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="s"){ e.preventDefault(); exportJSON(); return; }
-  if(k === "Escape"){ closeSheets(); closePalette(); closeCtx(); return; }
+  if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="f"){ e.preventDefault(); openFind(); return; }
+  if(k === "Escape"){ closeSheets(); closePalette(); closeCtx(); closeFind(); return; }
   if(sheetOpen) return;
   if(k === "Tab"){ e.preventDefault(); addChild(); }
   else if(k === "Enter"){ e.preventDefault(); addSibling(); }
@@ -1296,6 +1325,56 @@ stage.addEventListener("contextmenu", e => {
   openCtx(x, y, items);
 });
 addEventListener("pointerdown", e => { if(!e.target.closest("#ctx")) closeCtx(); });
+
+/* ===================== 검색 =====================
+   강조는 selected/marked 와 섞지 않는다. hits 배열만 보고 render 가 .hit 를 붙인다. */
+let hits = [], hitAt = -1;
+const findBox = $("#find"), findQ = $("#findq"), findN = $("#findn");
+
+function runFind(q){
+  hits = []; hitAt = -1;
+  const s = q.trim().toLowerCase();
+  if(s){
+    // walk 는 요약과 그 하위까지 도므로 요약 글자도 자동으로 검색된다
+    walk(root, n => { if(String(n.text||"").toLowerCase().includes(s)) hits.push(n.id); });
+    if(hits.length) hitAt = 0;
+  }
+  findN.textContent = s ? (hits.length ? `${hits.length}건 중 ${hitAt+1}번` : "없음") : "";
+  if(hitAt >= 0) revealHit(); else render();
+}
+/* 접힌 가지 안에 있으면 조상을 펴서 보여 준다. 되돌릴 필요는 없다. */
+function revealHit(){
+  const id = hits[hitAt]; if(!id) return;
+  let p = parentOf(id);
+  while(p){ p.collapsed = false; p = parentOf(p.id); }
+  render();
+  const n = find(id);
+  if(n && n.cx !== undefined) ensureVisible(n);
+}
+function stepHit(d){
+  if(!hits.length) return;
+  hitAt = (hitAt + d + hits.length) % hits.length;
+  findN.textContent = `${hits.length}건 중 ${hitAt+1}번`;
+  revealHit();
+}
+function openFind(){
+  findBox.hidden = false;
+  findQ.focus(); findQ.select();
+  if(findQ.value) runFind(findQ.value);
+}
+function closeFind(){
+  findBox.hidden = true;
+  hits = []; hitAt = -1; findN.textContent = "";
+  render();                      // 강조 제거
+}
+findQ.addEventListener("input", () => runFind(findQ.value));
+findQ.addEventListener("keydown", e => {
+  if(e.key === "Enter"){ e.preventDefault(); e.stopPropagation(); stepHit(e.shiftKey ? -1 : 1); }
+  else if(e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); closeFind(); }
+});
+$("#findnext").addEventListener("click", () => { stepHit(1); findQ.focus(); });
+$("#findprev").addEventListener("click", () => { stepHit(-1); findQ.focus(); });
+$("#findx").addEventListener("click", closeFind);
 
 /* ===================== 파일 입출력 ===================== */
 function download(name, blob){
