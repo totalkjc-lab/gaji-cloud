@@ -106,6 +106,7 @@
   .btn.accent{background:var(--focus);color:#fff}
   .btn.accent:hover{background:var(--focus);opacity:.88}
   .btn.danger:hover{background:color-mix(in srgb,#FF3B30 16%,transparent);color:#FF3B30}
+  .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
   .sep{width:1px;background:var(--panel-line);margin:5px 4px;flex:none}
 
   #zoom{right:20px;bottom:20px;padding:6px;display:flex;align-items:center;gap:2px}
@@ -211,6 +212,10 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="5"/><circle cx="15" cy="15" r="5"/></svg>
     <span class="lbl">색상</span>
   </button>
+  <button class="btn" data-act="group" title="Shift+드래그로 고른 항목을 묶어 요약 만들기" disabled>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H8"/><path d="M5 12h4"/><path d="M9 12h4"/><circle cx="17" cy="12" r="3"/></svg>
+    <span class="lbl">묶기</span>
+  </button>
   <button class="btn danger" data-act="del" title="선택한 주제 삭제 (Delete)">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l1 13h10l1-13"/></svg>
     <span class="lbl">삭제</span>
@@ -309,8 +314,9 @@
 const PALETTE = ["#D6455C","#E2841F","#2FA37A","#2E6FD9","#8358CE","#C0357E","#0E9BA6","#7A8B2E"];
 const ROOT_INK = "#1D1D1F";
 const HGAP = 58, VGAP = 14, MAXW = 200;
+const SUM_GAP = 34, BRACKET = 12;   // 요약 노드까지의 간격, 괄호 폭
 // layout scratch fields stamped onto nodes by measure()/place(); never persist these
-const SKIP = new Set(["_lines","_st","w","h","cx","cy","dir"]);
+const SKIP = new Set(["_lines","_st","w","h","cx","cy","dir","_sum","_owner","_top","_bot"]);
 function stripSer(obj, indent){ return JSON.stringify(obj, (k,v) => SKIP.has(k) ? undefined : v, indent); }
 const stage = document.getElementById("stage");
 const world = document.getElementById("world");
@@ -378,7 +384,7 @@ function tidySeparators(){
 function applyReadOnly(){
   document.body.classList.add("readonly");
   $("#status").textContent = "";
-  ["child","sibling","color","del","undo","import"].forEach(act => {
+  ["child","sibling","color","del","undo","import","group"].forEach(act => {
     const b = document.querySelector(`#bar [data-act="${act}"]`);
     if(b) b.style.display = "none";
   });
@@ -393,7 +399,15 @@ function applyReadOnly(){
 function walk(n, fn, parent=null, depth=0){
   fn(n, parent, depth);
   n.children.forEach(c => walk(c, fn, n, depth+1));
+  // 요약도 같은 트리로 순회한다. depth를 부모+1로 두면 find/parentOf/measure가
+  // 분기 없이 그대로 동작한다. _sum/_owner는 SKIP이라 저장에 섞이지 않는다.
+  if(n.summaries) for(const sm of n.summaries){
+    if(!sm.children) sm.children = [];
+    sm._sum = true; sm._owner = n;
+    walk(sm, fn, n, depth+1);
+  }
 }
+function isSummary(n){ return !!(n && n._sum); }
 function find(id){ let r=null; walk(root, n => { if(n.id===id) r=n; }); return r; }
 function parentOf(id){ let r=null; walk(root, (n,p) => { if(n.id===id) r=p; }); return r; }
 function depthOf(id){ let r=0; walk(root, (n,p,d) => { if(n.id===id) r=d; }); return r; }
@@ -459,6 +473,7 @@ function place(n, cx, cy, dir){
   }
 }
 function layout(){
+  pruneSummaries();
   walk(root, (n,p,d) => measure(n,d));
   root.cx = 0; root.cy = 0; root.dir = 1;
   const R = [], L = [];
@@ -477,6 +492,39 @@ function layout(){
     }
   };
   side(R,1); side(L,-1);
+  placeSummaries();
+}
+/* 노드와 그 하위 전체가 차지하는 범위 (접힌 가지는 제외) */
+function extentOf(n){
+  let top=n.cy-n.h/2, bot=n.cy+n.h/2, left=n.cx-n.w/2, right=n.cx+n.w/2;
+  if(!n.collapsed) for(const c of n.children){
+    const e=extentOf(c);
+    top=Math.min(top,e.top); bot=Math.max(bot,e.bot);
+    left=Math.min(left,e.left); right=Math.max(right,e.right);
+  }
+  return {top,bot,left,right};
+}
+/* 요약은 묶인 가지들 바깥쪽에, 그 범위의 세로 중앙에 놓는다.
+   부모가 접혀 있으면 배치하지 않아 요약과 그 하위가 함께 숨는다. */
+function placeSummaries(){
+  walk(root, n => {
+    if(isSummary(n)) return;                      // 요약의 요약은 만들지 않는다
+    if(!n.summaries || !n.summaries.length || n.collapsed) return;
+    const dir = (n === root) ? 1 : n.dir;
+    for(const sm of n.summaries){
+      const tg = (sm.targets||[]).map(id => n.children.find(c => c.id === id)).filter(Boolean);
+      if(!tg.length){ sm._top = sm._bot = null; continue; }
+      let top=1e9, bot=-1e9, left=1e9, right=-1e9;
+      for(const t of tg){
+        const e = extentOf(t);
+        top=Math.min(top,e.top); bot=Math.max(bot,e.bot);
+        left=Math.min(left,e.left); right=Math.max(right,e.right);
+      }
+      sm._top = top; sm._bot = bot;
+      const far = dir > 0 ? right : left;
+      place(sm, far + dir*(SUM_GAP + sm.w/2), (top+bot)/2, dir);
+    }
+  });
 }
 
 /* ===================== 그리기 ===================== */
@@ -491,6 +539,23 @@ function taper(p,c){
   return `M ${x1} ${y1-w1/2} C ${cp1x} ${y1-w1/2}, ${cp2x} ${y2-w2/2}, ${x2} ${y2-w2/2}`
        + ` L ${x2} ${y2+w2/2} C ${cp2x} ${y2+w2/2}, ${cp1x} ${y1+w1/2}, ${x1} ${y1+w1/2} Z`;
 }
+/* 묶인 범위를 감싸는 괄호. dir 로 좌우가 자동 반전된다. */
+function bracketPath(sm){
+  if(sm._top === null || sm._top === undefined) return "";
+  const dir = sm.dir, col = branchColor(sm);
+  const x = sm.cx - dir*(sm.w/2 + SUM_GAP - BRACKET);
+  const tip = x - dir*BRACKET, t = sm._top, b = sm._bot;
+  return `<path d="M ${tip} ${t} Q ${x} ${t} ${x} ${t+BRACKET} L ${x} ${b-BRACKET} Q ${x} ${b} ${tip} ${b}" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`
+       + `<path d="M ${x} ${(t+b)/2} L ${sm.cx - dir*sm.w/2} ${sm.cy}" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round"/>`;
+}
+/* 묶인 노드가 사라지면 대상에서 빼고, 전부 사라진 요약은 지운다. */
+function pruneSummaries(){
+  walk(root, n => {
+    if(!n.summaries || !n.summaries.length) return;
+    for(const sm of n.summaries) sm.targets = (sm.targets||[]).filter(id => n.children.some(c => c.id === id));
+    n.summaries = n.summaries.filter(sm => sm.targets.length > 0);
+  });
+}
 function render(){
   layout();
   let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
@@ -499,7 +564,13 @@ function render(){
     visible.push([n,d]);
     minX=Math.min(minX,n.cx-n.w/2); maxX=Math.max(maxX,n.cx+n.w/2);
     minY=Math.min(minY,n.cy-n.h/2); maxY=Math.max(maxY,n.cy+n.h/2);
-    if(!n.collapsed) n.children.forEach(c => collect(c,d+1));
+    if(!n.collapsed){
+      n.children.forEach(c => collect(c,d+1));
+      // 요약과 그 하위도 화면에 올린다. 대상이 모두 사라진 요약은 건너뛴다.
+      if(n.summaries) for(const sm of n.summaries){
+        if(sm._top !== null && sm._top !== undefined) collect(sm,d+1);
+      }
+    }
   })(root,0);
   const pad = 60;
   svg.style.left = (minX-pad)+"px"; svg.style.top = (minY-pad)+"px";
@@ -510,6 +581,7 @@ function render(){
   for(const [n] of visible){
     if(n.collapsed) continue;
     for(const c of n.children) paths += `<path d="${taper(n,c)}" fill="${branchColor(c)}" />`;
+    if(n.summaries && !isSummary(n)) for(const sm of n.summaries) paths += bracketPath(sm);
   }
   svg.innerHTML = paths;
 
@@ -557,6 +629,8 @@ function render(){
     if(!alive.has(id)){ el.remove(); if(el._tg) el._tg.remove(); nodeEls.delete(id); }
   }
   applyView();
+  const gb = document.querySelector('[data-act="group"]');
+  if(gb) gb.disabled = marked.size < 2;
   if(editing){ const en = find(editing); if(en && en.cx !== undefined) showBadge(en); }
   $("#docname").textContent = mapTitle();
   persist();
@@ -665,7 +739,9 @@ async function flush(){
 }
 
 /* ===================== 되돌리기 ===================== */
-function snap(){ return JSON.stringify({ root, selected }); }
+// 요약의 _owner 는 부모를 되가리키는 순환 참조다. 저장·내보내기와 같은
+// SKIP 규칙을 써서 런타임 표식을 빼고 직렬화한다.
+function snap(){ return JSON.stringify({ root, selected }, (k,v) => SKIP.has(k) ? undefined : v); }
 function push(){ undoStack.push(snap()); if(undoStack.length>80) undoStack.shift(); redoStack.length = 0; }
 function restore(s){
   const o = JSON.parse(s);
@@ -687,16 +763,62 @@ function addSibling(){
   if(readOnly) return;
   const n = find(selected); if(!n) return;
   if(n === root) return addChild();
+  // 요약에는 형제 개념이 없다. Enter 는 하위 추가로 넘긴다.
+  if(isSummary(n)) return addChild();
   push();
   const p = parentOf(n.id), c = mk("새 주제");
   if(p === root) c.side = n.side;
   p.children.splice(p.children.indexOf(n)+1, 0, c);
   selected = c.id; render(); startEdit();
 }
+/* Shift+드래그로 고른 항목을 하나의 요약으로 묶는다.
+   - 상위가 섞이면 가장 많이 골린 상위 하나만 쓰고 나머지는 알리고 버린다
+   - 1번과 3번만 골라도 사이의 2번까지 연속 범위로 채운다
+   - 요약 자신과 요약의 하위는 대상이 되지 않는다 (요약의 요약 금지) */
+function groupSummary(){
+  if(readOnly) return;
+  if(marked.size < 2) return toast("두 개 이상 고른 뒤 눌러 주세요");
+  const byParent = new Map();
+  for(const id of marked){
+    const n = find(id);
+    if(!n || n === root || isSummary(n)) continue;
+    const p = parentOf(id);
+    if(!p || isSummary(p)) continue;
+    if(!byParent.has(p)) byParent.set(p, []);
+    byParent.get(p).push(n);
+  }
+  let owner = null, bestN = 0;
+  for(const [p, list] of byParent) if(list.length > bestN){ owner = p; bestN = list.length; }
+  if(!owner || bestN < 2) return toast("같은 상위 항목 아래에서 두 개 이상 골라 주세요");
+  if(byParent.size > 1) toast("상위가 다른 항목은 빼고 묶었습니다");
+
+  const picked = byParent.get(owner);
+  const idx = owner.children.map((c,i) => picked.includes(c) ? i : -1).filter(i => i >= 0);
+  const targets = owner.children.slice(Math.min(...idx), Math.max(...idx) + 1).map(c => c.id);
+
+  push();
+  if(!owner.summaries) owner.summaries = [];
+  const sm = { id: nid(), targets, text: "요약", children: [], color: null };
+  owner.summaries.push(sm);
+  marked.clear();
+  selected = sm.id;
+  render();
+  startEdit();
+}
+
 function removeNode(){
   if(readOnly) return;
   const n = find(selected);
   if(!n || n === root) return toast("중심 주제는 지울 수 없습니다");
+  if(isSummary(n)){
+    // 요약만 지운다. 묶여 있던 노드는 그대로 둔다.
+    push();
+    const own = n._owner;
+    own.summaries = own.summaries.filter(x => x !== n);
+    selected = own.id;
+    render();
+    return;
+  }
   push();
   const p = parentOf(n.id), i = p.children.indexOf(n);
   p.children.splice(i,1);
@@ -1112,7 +1234,12 @@ $("#file").addEventListener("change", ev => {
 });
 function exportMD(){
   let out = "";
-  walk(root, (n,p,d) => { out += d===0 ? `# ${n.text}\n\n` : `${"  ".repeat(d-1)}- ${n.text.replace(/\n/g," ")}\n`; });
+  walk(root, (n,p,d) => {
+    const t = n.text.replace(/\n/g," ");
+    // walk는 자식을 먼저 돌고 요약을 뒤에 돌므로, 묶인 항목들 바로 다음 줄에 놓인다
+    if(isSummary(n)) out += `${"  ".repeat(d-1)}> 요약: ${t}\n`;
+    else out += d===0 ? `# ${n.text}\n\n` : `${"  ".repeat(d-1)}- ${t}\n`;
+  });
   download(safeName(mapTitle())+".md", new Blob([out],{type:"text/markdown"}));
   toast("마크다운으로 내보냈습니다");
 }
@@ -1124,7 +1251,12 @@ function exportPNG(){
     list.push([n,d]);
     minX=Math.min(minX,n.cx-n.w/2); maxX=Math.max(maxX,n.cx+n.w/2);
     minY=Math.min(minY,n.cy-n.h/2); maxY=Math.max(maxY,n.cy+n.h/2);
-    if(!n.collapsed) n.children.forEach(x => c(x,d+1));
+    if(!n.collapsed){
+      n.children.forEach(x => c(x,d+1));
+      if(n.summaries) for(const sm of n.summaries){
+        if(sm._top !== null && sm._top !== undefined) c(sm,d+1);
+      }
+    }
   })(root,0);
   const pad = 48, W = maxX-minX+pad*2, H = maxY-minY+pad*2;
   const bg = dark ? "#12171D" : "#ECEEE8";
@@ -1133,6 +1265,7 @@ function exportPNG(){
   for(const [n] of list){
     if(n.collapsed) continue;
     for(const ch of n.children) body += `<path d="${taper(n,ch)}" fill="${branchColor(ch)}"/>`;
+    if(n.summaries && !isSummary(n)) for(const sm of n.summaries) body += bracketPath(sm);
   }
   for(const [n,d] of list){
     const col = branchColor(n), st = n._st;
@@ -1175,7 +1308,8 @@ document.body.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if(!b) return;
   const a = b.dataset.act;
   if(a !== "color") b.blur();
-  if(a==="child") addChild();
+  if(a==="group") groupSummary();
+  else if(a==="child") addChild();
   else if(a==="sibling") addSibling();
   else if(a==="del") removeNode();
   else if(a==="color") pal.classList.contains("open") ? closePalette() : openPalette(b);
