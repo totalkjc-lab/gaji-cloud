@@ -124,6 +124,20 @@
   .swatch{width:22px;height:22px;border-radius:7px;border:0;cursor:pointer}
   .swatch:hover{transform:scale(1.12)}
 
+  #ctx{position:fixed;z-index:45;display:none;min-width:184px;padding:6px;
+    background:var(--panel);backdrop-filter:saturate(180%) blur(20px);
+    -webkit-backdrop-filter:saturate(180%) blur(20px);
+    border:1px solid var(--panel-line);border-radius:12px;box-shadow:var(--shadow)}
+  #ctx.open{display:block}
+  #ctx button{appearance:none;border:0;background:transparent;color:var(--ink);width:100%;
+    display:flex;align-items:center;gap:9px;text-align:left;font-family:var(--font);
+    font-size:13.5px;font-weight:500;letter-spacing:-.01em;padding:8px 10px;border-radius:8px;cursor:pointer}
+  #ctx button:hover{background:color-mix(in srgb,var(--ink) 9%,transparent)}
+  #ctx button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+  #ctx button.danger:hover{background:color-mix(in srgb,#FF3B30 16%,transparent);color:#FF3B30}
+  #ctx button .k{margin-left:auto;font:500 11px/1 var(--mono);color:var(--ink-soft)}
+  #ctx hr{border:0;border-top:1px solid var(--panel-line);margin:5px 4px}
+
   #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(14px);z-index:60;
     padding:9px 16px;border-radius:10px;background:var(--ink);color:var(--paper);font-size:13px;font-weight:600;
     opacity:0;pointer-events:none;transition:all .22s ease;max-width:min(420px,calc(100vw - 40px));text-align:center}
@@ -259,6 +273,7 @@
 </div>
 
 <div id="palette"></div>
+<div id="ctx" role="menu"></div>
 
 <div id="zoom" class="panel">
   <button class="btn" data-act="zout">−</button>
@@ -830,6 +845,17 @@ function toggleCollapse(){
   if(!n || !n.children.length) return;
   push(); n.collapsed = !n.collapsed; render();
 }
+/* 전체 접기·펴기. 중심 주제는 접지 않는다 — 접으면 맵이 통째로 사라진다. */
+function expandAll(){
+  push(); walk(root, n => { if(n.children.length) n.collapsed = false; }); render();
+}
+function collapseAll(){
+  push(); walk(root, (n,p,d) => { if(d >= 1 && n.children.length) n.collapsed = true; }); render();
+}
+/* lv 단계까지만 펼친다. lv=1 이면 중심 주제의 바로 아래까지만 보인다. */
+function collapseToLevel(lv){
+  push(); walk(root, (n,p,d) => { if(n.children.length) n.collapsed = d >= lv; }); render();
+}
 let badge = null;
 function showBadge(n){
   if(!badge){
@@ -1040,6 +1066,9 @@ function updateMarquee(){
 }
 function hideMarquee(){ if(marqEl) marqEl.style.display = "none"; }
 stage.addEventListener("pointerdown", e => {
+  // 오른쪽·가운데 버튼은 여기서 처리하지 않는다. 우클릭이 팬이나 노드 드래그를
+  // 함께 발동시키면 메뉴가 뜨는 순간 화면이 밀린다.
+  if(e.button) return;
   const nodeEl = e.target.closest(".node");
   if(editing && (!nodeEl || nodeEl.dataset.id !== editing)) commitEdit();
   if(nodeEl){
@@ -1153,7 +1182,7 @@ addEventListener("keydown", e => {
   const k = e.key;
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="z"){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="s"){ e.preventDefault(); exportJSON(); return; }
-  if(k === "Escape"){ closeSheets(); closePalette(); return; }
+  if(k === "Escape"){ closeSheets(); closePalette(); closeCtx(); return; }
   if(sheetOpen) return;
   if(k === "Tab"){ e.preventDefault(); addChild(); }
   else if(k === "Enter"){ e.preventDefault(); addSibling(); }
@@ -1196,13 +1225,77 @@ rst.onclick = () => { const n = find(selected); if(n){ push(); n.color = null; r
 pal.appendChild(rst);
 function openPalette(btn){
   const r = btn.getBoundingClientRect();
-  pal.style.left = r.left+"px"; pal.style.top = (r.bottom+8)+"px";
+  openPaletteAt(r.left, r.bottom + 8);
+}
+/* 우클릭 메뉴에서도 색상판을 열 수 있게 좌표로 여는 형태를 따로 둔다. */
+function openPaletteAt(x, y){
+  pal.style.left = Math.min(x, innerWidth - 260) + "px";
+  pal.style.top  = Math.min(y, innerHeight - 60) + "px";
   pal.classList.add("open");
 }
 function closePalette(){ pal.classList.remove("open"); }
 addEventListener("pointerdown", e => {
   if(!e.target.closest("#palette") && !e.target.closest('[data-act="color"]')) closePalette();
 });
+
+/* ===================== 우클릭 메뉴 =====================
+   툴바까지 마우스를 왕복하지 않도록, 노드 위에서 바로 편집 동작을 낸다.
+   동작은 전부 기존 함수를 그대로 부른다 — 새 편집 경로를 만들지 않는다. */
+const ctx = $("#ctx");
+function closeCtx(){ ctx.classList.remove("open"); ctx.innerHTML = ""; }
+function openCtx(x, y, items){
+  ctx.innerHTML = "";
+  for(const it of items){
+    if(it === "-"){ ctx.appendChild(document.createElement("hr")); continue; }
+    const b = document.createElement("button");
+    b.type = "button";
+    if(it.danger) b.className = "danger";
+    b.textContent = it.label;
+    if(it.key){
+      const k = document.createElement("span");
+      k.className = "k"; k.textContent = it.key;
+      b.appendChild(k);
+    }
+    b.addEventListener("click", () => { closeCtx(); it.run(); });
+    ctx.appendChild(b);
+  }
+  ctx.classList.add("open");
+  const r = ctx.getBoundingClientRect();
+  ctx.style.left = Math.max(8, Math.min(x, innerWidth  - r.width  - 8)) + "px";
+  ctx.style.top  = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + "px";
+}
+stage.addEventListener("contextmenu", e => {
+  if(editing) return;                       // 편집 중에는 브라우저 맞춤법 메뉴를 살린다
+  e.preventDefault();
+  closePalette();
+  const el = e.target.closest(".node");
+  const x = e.clientX, y = e.clientY;
+  if(!el){
+    openCtx(x, y, [
+      { label:"화면 맞춤", run:fit },
+      "-",
+      { label:"전체 펴기", run:expandAll },
+      { label:"전체 접기", run:collapseAll },
+      { label:"1단계까지만", run:() => collapseToLevel(1) }
+    ]);
+    return;
+  }
+  const n = find(el.dataset.id); if(!n) return;
+  if(marked.size) marked.clear();
+  selected = n.id; render();
+  if(readOnly){ openCtx(x, y, [{ label:"화면 맞춤", run:fit }]); return; }
+  const items = [{ label:"하위 주제 추가", key:"Tab", run:addChild }];
+  if(n !== root && !isSummary(n)) items.push({ label:"형제 주제 추가", key:"Enter", run:addSibling });
+  items.push({ label:"글자 수정", key:"F2", run:startEdit });
+  items.push({ label:"색상", run:() => openPaletteAt(x, y) });
+  if(n.children.length) items.push({ label:n.collapsed ? "펴기" : "접기", key:"Space", run:toggleCollapse });
+  if(n !== root){
+    items.push("-");
+    items.push({ label:"삭제", key:"Del", danger:true, run:removeNode });
+  }
+  openCtx(x, y, items);
+});
+addEventListener("pointerdown", e => { if(!e.target.closest("#ctx")) closeCtx(); });
 
 /* ===================== 파일 입출력 ===================== */
 function download(name, blob){
