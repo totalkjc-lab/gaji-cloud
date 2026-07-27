@@ -44,6 +44,10 @@
   .node{position:absolute;display:flex;align-items:center;justify-content:center;text-align:center;
     white-space:pre;line-height:20px;border-radius:10px;cursor:default;user-select:none;
     transition:box-shadow .12s ease,transform .12s ease}
+  /* 가지가 밀려나는 움직임만 부드럽게. 첫 배치(body.ready 이전)와 편집 중인 칸
+     자신은 제외한다 — 칸이 따라 움직이면 커서가 글자를 쫓아다니는 것처럼 보인다. */
+  body.ready .node:not(.editing){transition:box-shadow .12s ease,transform .12s ease,
+    left .12s var(--ease),top .12s var(--ease),width .12s var(--ease),height .12s var(--ease)}
   .node.lv0{color:#fff;border-radius:14px;box-shadow:var(--shadow)}
   .node.lv1{color:#fff;box-shadow:var(--shadow)}
   .node.lvN{background:var(--chip);color:var(--ink);box-shadow:0 1px 0 var(--chip-line);border-radius:8px}
@@ -517,7 +521,9 @@ function render(){
     const col = branchColor(n);
     el.className = "node " + n._st.cls + (n.id===selected ? " sel" : "") + (n.id===editing ? " editing" : "");
     el.style.left = (n.cx-n.w/2)+"px"; el.style.top = (n.cy-n.h/2)+"px";
-    if(n.id !== editing){ el.style.width = n.w+"px"; el.style.height = n.h+"px"; }
+    // 편집 중인 노드도 다른 노드와 똑같은 크기로 잡는다. 예외를 두면 그 칸만
+    // 레이아웃 밖으로 자라나 옆 노드를 덮는다.
+    el.style.width = n.w+"px"; el.style.height = n.h+"px";
     el.style.font = `${n._st.weight} ${n._st.size}px/${n._st.size+6}px var(--font)`;
     el.style.padding = `${n._st.padY}px ${n._st.padX}px`;
     if(d===0){ el.style.background = n.color || ROOT_INK; el.style.borderBottom = ""; }
@@ -722,7 +728,8 @@ function startEdit(){
   // 마우스 오른쪽 클릭으로 고칠 낱말을 고를 수 있습니다.
   el.spellcheck = true;
   el.setAttribute("lang", "ko");
-  el.style.width = "auto"; el.style.minWidth = MAXW+"px"; el.style.height = "auto";
+  // 크기는 render()가 다른 노드와 같은 기준으로 잡는다 (0-2). 여기서 auto/minWidth로
+  // 띄우면 짧은 글자에도 칸이 크게 남고, 길어질 때 옆 노드를 덮는다.
   el.style.userSelect = "text"; el.style.webkitUserSelect = "text"; el.style.caretColor = "var(--focus)";
   el.textContent = n.text;
 
@@ -736,7 +743,15 @@ function startEdit(){
   const disarm = () => { dirty = true; };
   // 입력이 들어올 때마다 모델에 반영하고 저장을 예약한다. 이렇게 해야 Enter를
   // 누르기 전에 창을 닫아도 글자가 남는다. render()는 부르지 않는다.
-  const onInput = () => { dirty = true; syncEditingToModel(); persist(); };
+  const onInput = () => {
+    dirty = true;
+    syncEditingToModel();
+    // 글자가 늘면 칸도 커져야 하고, 그만큼 옆 가지가 밀려나야 한다.
+    // render() 끝에서 persist()가 불리므로 저장 예약도 함께 걸린다.
+    render();
+    const cur = find(n.id);
+    if(cur) ensureVisible(cur);   // 칸이 화면 밖으로 자라면 화면을 밀어 보여 준다
+  };
   el.addEventListener("beforeinput", disarm);
   el.addEventListener("input", onInput);
   el.addEventListener("compositionstart", disarm);   // 한글 IME 보호
@@ -832,7 +847,10 @@ function centerWorldOn(wx, wy){
 function ensureVisible(n){
   const a = safeArea();
   const sx = n.cx*view.z + view.x, sy = n.cy*view.z + view.y;
-  const mx = Math.min(120, a.w/2), my = Math.min(120, a.h/2);
+  // 여백은 노드 반폭보다 커야 칸 전체가 들어온다. 편집 중인 칸은 글자가 늘면서
+  // 커지므로, 중심만 맞추면 가장자리가 잘린다.
+  const mx = Math.min(Math.max(120, n.w*view.z/2 + 24), a.w/2);
+  const my = Math.min(Math.max(120, n.h*view.z/2 + 24), a.h/2);
   let dx=0, dy=0;
   if(sx < a.left + mx) dx = a.left + mx - sx;
   if(sx > a.left + a.w - mx) dx = a.left + a.w - mx - sx;
@@ -1192,6 +1210,9 @@ document.addEventListener("visibilitychange", () => {
   try{ await loadMap(); } catch { return; }
   render(); fit();
   if(document.fonts && document.fonts.ready) document.fonts.ready.then(() => { render(); fit(); });
+  // 첫 배치와 폰트 로드 후 재배치가 끝난 다음부터 이동 애니메이션을 켠다.
+  // 그 전에 켜면 모든 노드가 0,0에서 날아오는 것처럼 보인다.
+  requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.add("ready")));
 })();
 
 })();
