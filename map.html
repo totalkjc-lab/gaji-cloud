@@ -67,6 +67,10 @@
   .editbadge .dim{opacity:.72;font-family:var(--mono);font-size:10px;font-weight:500}
   @keyframes caret{0%,50%{opacity:1}51%,100%{opacity:0}}
   .node.drop{box-shadow:0 0 0 2px var(--paper),0 0 0 4px var(--ok)}
+  /* Shift+드래그로 고른 노드 — 단일 선택(.sel)과 구분되게 보라 계열 */
+  .node.marked{box-shadow:0 0 0 2px var(--paper),0 0 0 4px #5E5CE6}
+  #marquee{position:fixed;z-index:40;display:none;pointer-events:none;border-radius:6px;
+    border:1.5px solid #5E5CE6;background:rgba(94,92,230,.12)}
   .node.ghost{opacity:.35}
   .toggle{position:absolute;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;
     justify-content:center;font:600 10px/1 var(--mono);color:#fff;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25)}
@@ -519,7 +523,8 @@ function render(){
       world.appendChild(el); nodeEls.set(n.id, el);
     }
     const col = branchColor(n);
-    el.className = "node " + n._st.cls + (n.id===selected ? " sel" : "") + (n.id===editing ? " editing" : "");
+    el.className = "node " + n._st.cls + (n.id===selected ? " sel" : "") + (n.id===editing ? " editing" : "")
+                 + (marked.has(n.id) ? " marked" : "");
     el.style.left = (n.cx-n.w/2)+"px"; el.style.top = (n.cy-n.h/2)+"px";
     // 편집 중인 노드도 다른 노드와 똑같은 크기로 잡는다. 예외를 두면 그 칸만
     // 레이아웃 밖으로 자라나 옆 노드를 덮는다.
@@ -884,7 +889,34 @@ function zoomAt(f,px,py){
 }
 
 /* ===================== 포인터 ===================== */
-let pan=null, drag=null, dropTarget=null, pinch=null, lastTap=null;
+let pan=null, drag=null, dropTarget=null, pinch=null, lastTap=null, marquee=null;
+
+/* Shift+드래그로 고른 노드들. selected(단일 선택)와 별개이며, 삭제·색상·방향키·
+   노드 드래그 등 기존 동작은 이 집합을 보지 않는다. 「묶기」만 사용한다. */
+const marked = new Set();
+let marqEl = null;
+function marqRect(){
+  return { l:Math.min(marquee.x0,marquee.x1), t:Math.min(marquee.y0,marquee.y1),
+           r:Math.max(marquee.x0,marquee.x1), b:Math.max(marquee.y0,marquee.y1) };
+}
+function updateMarquee(){
+  if(!marqEl){
+    marqEl = document.createElement("div");
+    marqEl.id = "marquee";
+    document.body.appendChild(marqEl);
+  }
+  const q = marqRect();
+  marqEl.style.cssText = `display:block;left:${q.l}px;top:${q.t}px;width:${q.r-q.l}px;height:${q.b-q.t}px`;
+  // 사각형에 걸친 노드를 즉시 표시한다. 전체 render를 돌리면 드래그가 무거워지므로
+  // 클래스만 직접 갈아끼운다.
+  for(const [id, el] of nodeEls){
+    const r = el.getBoundingClientRect();
+    const hit = !(r.right < q.l || r.left > q.r || r.bottom < q.t || r.top > q.b);
+    if(hit) marked.add(id); else marked.delete(id);
+    el.classList.toggle("marked", hit);
+  }
+}
+function hideMarquee(){ if(marqEl) marqEl.style.display = "none"; }
 stage.addEventListener("pointerdown", e => {
   const nodeEl = e.target.closest(".node");
   if(editing && (!nodeEl || nodeEl.dataset.id !== editing)) commitEdit();
@@ -895,17 +927,28 @@ stage.addEventListener("pointerdown", e => {
     const twice = lastTap && lastTap.id === n.id && (now - lastTap.t) < 450
                   && Math.hypot(e.clientX-lastTap.x, e.clientY-lastTap.y) < 12;
     lastTap = { id:n.id, t:now, x:e.clientX, y:e.clientY };
+    if(marked.size) marked.clear();          // 노드를 누르면 사각형 선택은 풀린다
     selected = n.id; render();
     if(twice){ lastTap = null; startEdit(); return; }
     if(readOnly){ drag = null; return; }
     drag = { n, sx:e.clientX, sy:e.clientY, on:false, pid:e.pointerId };
   } else {
     lastTap = null;
+    if(e.shiftKey && !readOnly){
+      // Shift+드래그 = 사각형 선택. 일반 드래그는 지금까지처럼 화면 이동.
+      marquee = { x0:e.clientX, y0:e.clientY, x1:e.clientX, y1:e.clientY };
+      marked.clear();
+      updateMarquee();
+      stage.setPointerCapture(e.pointerId);
+      return;
+    }
+    if(marked.size){ marked.clear(); render(); }
     pan = { x:e.clientX, y:e.clientY, vx:view.x, vy:view.y };
     stage.classList.add("panning"); stage.setPointerCapture(e.pointerId);
   }
 });
 stage.addEventListener("pointermove", e => {
+  if(marquee){ marquee.x1 = e.clientX; marquee.y1 = e.clientY; updateMarquee(); return; }
   if(pan){ view.x = pan.vx + (e.clientX-pan.x); view.y = pan.vy + (e.clientY-pan.y); applyView(); return; }
   if(!drag) return;
   if(!drag.on && Math.hypot(e.clientX-drag.sx, e.clientY-drag.sy) > 6){
@@ -924,6 +967,7 @@ stage.addEventListener("pointermove", e => {
   if(dropTarget){ const p = nodeEls.get(dropTarget.id); if(p) p.classList.add("drop"); }
 });
 function endPointer(){
+  if(marquee){ hideMarquee(); marquee = null; stage.classList.remove("panning"); render(); return; }
   stage.classList.remove("panning"); pan = null; pinch = null;
   if(drag && drag.on){
     const g = nodeEls.get(drag.n.id); if(g) g.classList.remove("ghost");
