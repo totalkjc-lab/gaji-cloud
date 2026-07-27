@@ -1199,7 +1199,7 @@ addEventListener("keydown", e => {
   // 검색창 안에서 친 글자가 맵 단축키로 새 나가면 안 된다 (「선택 후 타이핑」이 걸린다)
   if(e.target && e.target.closest && e.target.closest("#find")) return;
   if(readOnly && !["ArrowRight","ArrowLeft","ArrowUp","ArrowDown","Escape"," "].includes(e.key)
-     && !((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="s")) return;
+     && !((e.ctrlKey||e.metaKey) && ["s","c","f"].includes(e.key.toLowerCase()))) return;
   if(editing){
     if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); commitEdit(true); }
     else if(e.key === "Escape"){ e.preventDefault(); commitEdit(false); }
@@ -1211,6 +1211,10 @@ addEventListener("keydown", e => {
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="z"){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="s"){ e.preventDefault(); exportJSON(); return; }
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="f"){ e.preventDefault(); openFind(); return; }
+  // 편집 중이면 위쪽 if(editing) 에서 이미 빠져나갔으므로, 글자 복사·붙여넣기가 우선한다
+  if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="c"){ e.preventDefault(); copyNode(); return; }
+  if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="x"){ e.preventDefault(); cutNode(); return; }
+  if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="v"){ e.preventDefault(); pasteNode(); return; }
   if(k === "Escape"){ closeSheets(); closePalette(); closeCtx(); closeFind(); return; }
   if(sheetOpen) return;
   if(k === "Tab"){ e.preventDefault(); addChild(); }
@@ -1316,6 +1320,11 @@ stage.addEventListener("contextmenu", e => {
   const items = [{ label:"하위 주제 추가", key:"Tab", run:addChild }];
   if(n !== root && !isSummary(n)) items.push({ label:"형제 주제 추가", key:"Enter", run:addSibling });
   items.push({ label:"글자 수정", key:"F2", run:startEdit });
+  items.push("-");
+  items.push({ label:"복사", key:"Ctrl+C", run:copyNode });
+  if(n !== root) items.push({ label:"잘라내기", key:"Ctrl+X", run:cutNode });
+  items.push({ label:"붙여넣기", key:"Ctrl+V", run:pasteNode });
+  items.push("-");
   items.push({ label:"색상", run:() => openPaletteAt(x, y) });
   if(n.children.length) items.push({ label:n.collapsed ? "펴기" : "접기", key:"Space", run:toggleCollapse });
   if(n !== root){
@@ -1325,6 +1334,95 @@ stage.addEventListener("contextmenu", e => {
   openCtx(x, y, items);
 });
 addEventListener("pointerdown", e => { if(!e.target.closest("#ctx")) closeCtx(); });
+
+/* ===================== 복사 · 잘라내기 · 붙여넣기 =====================
+   본체는 localStorage 다. 페이지가 새로 뜨는 다른 맵으로도 넘어간다.
+   동시에 텍스트 버전을 시스템 클립보드에도 넣어 카톡·메일에 바로 붙일 수 있게 한다. */
+const CLIP_KEY = "gaji:clip:v1";
+const CLIP_STALE = 864e5;                      // 하루
+
+/* 하위 가지째 깊은 복사. 모든 id를 새로 발급하고, 요약의 targets를 새 id로 다시 잇는다.
+   복사 범위 밖을 가리키는 요약은 복사본에서 뺀다(묶인 노드 일부만 복사한 경우). */
+function cloneSubtree(src){
+  const idMap = new Map();
+  const clone = n => {
+    const c = { id: nid(), text: n.text, children: [], collapsed: !!n.collapsed,
+                color: n.color || null, side: n.side || null };
+    idMap.set(n.id, c.id);
+    c.children = (n.children || []).map(clone);
+    if(n.summaries && n.summaries.length){
+      c.summaries = n.summaries.map(s => {
+        const sc = { id: nid(), targets: (s.targets || []).slice(), text: s.text,
+                     children: (s.children || []).map(clone), color: s.color || null };
+        idMap.set(s.id, sc.id);
+        return sc;
+      });
+    }
+    return c;
+  };
+  const copy = clone(src);
+  (function remap(c){
+    if(c.summaries){
+      c.summaries = c.summaries.filter(s => {
+        const t = s.targets.map(id => idMap.get(id));
+        if(t.some(x => !x)) return false;      // 대상이 복사 범위 밖 → 이 요약은 버린다
+        s.targets = t;
+        return true;
+      });
+      c.summaries.forEach(s => s.children.forEach(remap));
+      if(!c.summaries.length) delete c.summaries;
+    }
+    c.children.forEach(remap);
+  })(copy);
+  return copy;
+}
+/* 마크다운 내보내기와 같은 형식의 텍스트 (붙여넣기용) */
+function mdSubtree(n){
+  let out = "";
+  walk(n, (x,p,d) => {
+    const t = String(x.text || "").replace(/\n/g, " ");
+    out += isSummary(x) ? `${"  ".repeat(d)}> 요약: ${t}\n` : `${"  ".repeat(d)}- ${t}\n`;
+  });
+  return out;
+}
+function clipWrite(n){
+  const payload = { app:"gaji", kind:"node", at: Date.now(), node: cloneSubtree(n) };
+  try{ localStorage.setItem(CLIP_KEY, JSON.stringify(payload, (k,v) => SKIP.has(k) ? undefined : v)); }
+  catch{ toast("복사하지 못했습니다"); return false; }
+  // 텍스트 버전은 곁다리다. 실패해도 넘어간다.
+  try{ if(navigator.clipboard) navigator.clipboard.writeText(mdSubtree(n)).catch(()=>{}); }catch{}
+  return true;
+}
+function copyNode(){
+  const n = find(selected); if(!n) return;
+  if(clipWrite(n)) toast("복사했습니다");
+}
+function cutNode(){
+  if(readOnly) return;
+  const n = find(selected); if(!n) return;
+  if(n === root) return toast("중심 주제는 잘라낼 수 없습니다");
+  if(!clipWrite(n)) return;
+  removeNode();          // push · 렌더 · 요약 정리(pruneSummaries)를 그대로 탄다
+  toast("잘라냈습니다");
+}
+function pasteNode(){
+  if(readOnly) return;
+  const target = find(selected); if(!target) return;
+  let payload = null;
+  try{ payload = JSON.parse(localStorage.getItem(CLIP_KEY) || "null"); }catch{}
+  if(!payload || payload.kind !== "node" || !payload.node) return toast("붙여넣을 것이 없습니다");
+  if(Date.now() - (payload.at || 0) > CLIP_STALE) toast("오래된 복사본입니다");
+  // 붙여넣을 때마다 새 id를 발급하므로 여러 번 붙여도 겹치지 않는다.
+  const fresh = cloneSubtree(payload.node);
+  push();
+  target.collapsed = false;
+  target.children.push(fresh);
+  fresh.side = (target === root)
+    ? (root.children.filter(c=>c.side==="R").length <= root.children.filter(c=>c.side==="L").length ? "R" : "L")
+    : null;
+  selected = fresh.id;
+  render();
+}
 
 /* ===================== 검색 =====================
    강조는 selected/marked 와 섞지 않는다. hits 배열만 보고 render 가 .hit 를 붙인다. */
