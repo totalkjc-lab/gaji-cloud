@@ -895,8 +895,117 @@ function groupSummary(){
   startEdit();
 }
 
+/* ===================== 형제 순서 바꾸기 =====================
+   요약은 「연속 범위」를 전제로 하므로, 순서를 바꿀 때 그 전제를 깨지 않아야 한다.
+   판정 순서:
+     1) 바로 옆 이웃이 나와 같은 요약에 속하면 → 둘만 맞바꾼다 (집합·연속성 그대로)
+     2) 아니면 → 요약이 덮는 범위를 한 덩어리로 보고 덩어리째 맞바꾼다          */
+function unitRange(p, i){
+  let lo = i, hi = i;
+  const ranges = (p.summaries || []).map(s => {
+    const idx = (s.targets || []).map(id => p.children.findIndex(c => c.id === id)).filter(x => x >= 0);
+    return idx.length ? { lo:Math.min(...idx), hi:Math.max(...idx) } : null;
+  }).filter(Boolean);
+  for(let changed = true; changed; ){          // 겹치는 요약끼리는 전이적으로 합친다
+    changed = false;
+    for(const r of ranges){
+      if(r.lo <= hi && r.hi >= lo){
+        if(r.lo < lo){ lo = r.lo; changed = true; }
+        if(r.hi > hi){ hi = r.hi; changed = true; }
+      }
+    }
+  }
+  return { lo, hi };
+}
+function reorderSibling(d){
+  if(readOnly) return;
+  const n = find(selected);
+  if(!n || n === root || isSummary(n)) return;   // 요약은 형제 순서 개념이 없다
+  const p = parentOf(n.id); if(!p) return;
+  const i = p.children.indexOf(n); if(i < 0) return;
+  // 루트 자식은 좌우로 갈려 있으므로 같은 쪽 안에서만 움직인다
+  const sameSide = c => p !== root || c.side === n.side;
+
+  let k0 = -1;
+  for(let k = i + d; k >= 0 && k < p.children.length; k += d){
+    if(sameSide(p.children[k])){ k0 = k; break; }
+  }
+  if(k0 < 0) return;
+
+  const shared = (p.summaries || []).some(s => {
+    const t = s.targets || [];
+    return t.includes(n.id) && t.includes(p.children[k0].id);
+  });
+
+  push();
+  if(shared){
+    const t = p.children[i]; p.children[i] = p.children[k0]; p.children[k0] = t;
+  } else {
+    const my = unitRange(p, i);
+    let j = -1;
+    for(let k = (d > 0 ? my.hi + 1 : my.lo - 1); k >= 0 && k < p.children.length; k += d){
+      if(sameSide(p.children[k])){ j = k; break; }
+    }
+    if(j < 0){ undoStack.pop(); return; }        // 더 갈 곳이 없으면 되돌릴 것도 없다
+    const nb = unitRange(p, j);
+    const early = (my.lo < nb.lo) ? my : nb, late = (my.lo < nb.lo) ? nb : my;
+    const U = p.children.slice(early.lo, early.hi + 1);
+    const M = p.children.slice(early.hi + 1, late.lo);     // 사이에 낀 반대쪽 형제는 자리를 지킨다
+    const V = p.children.slice(late.lo, late.hi + 1);
+    p.children.splice(early.lo, late.hi - early.lo + 1, ...V, ...M, ...U);
+  }
+  render();
+  const cur = find(n.id); if(cur) ensureVisible(cur);
+}
+
+/* ===================== 여러 개 선택했을 때 =====================
+   marked 는 Shift+드래그로만 채워진다. selected(단일)는 그대로 둔다. */
+function markedNodes(){
+  const list = [...marked].map(find).filter(n => n && n !== root);
+  // 조상이 함께 선택돼 있으면 자손은 뺀다 — 조상을 지우면 같이 사라진다
+  return list.filter(n => !list.some(o => o !== n && isAncestor(o, n)));
+}
+function removeMarked(){
+  const top = markedNodes();
+  if(!top.length) return;
+  push();
+  for(const n of top){
+    if(isSummary(n)){
+      const o = n._owner;
+      if(o && o.summaries) o.summaries = o.summaries.filter(x => x !== n);
+      continue;
+    }
+    const p = parentOf(n.id); if(!p) continue;
+    const i = p.children.indexOf(n);
+    if(i >= 0) p.children.splice(i, 1);
+  }
+  marked.clear();
+  selected = root.id;
+  render();
+  toast(top.length + "개를 지웠습니다");
+}
+function colorMarked(c){
+  const list = [...marked].map(find).filter(Boolean);
+  if(!list.length) return false;
+  push();
+  for(const n of list) n.color = c;
+  render();
+  return true;
+}
+function copyMarked(){
+  const top = markedNodes();
+  if(top.length < 2) return false;
+  const payload = { app:"gaji", kind:"nodes", at: Date.now(), nodes: top.map(cloneSubtree) };
+  try{ localStorage.setItem(CLIP_KEY, JSON.stringify(payload, (k,v) => SKIP.has(k) ? undefined : v)); }
+  catch{ toast("복사하지 못했습니다"); return true; }
+  try{ if(navigator.clipboard) navigator.clipboard.writeText(top.map(mdSubtree).join("")).catch(()=>{}); }catch{}
+  toast(top.length + "개를 복사했습니다");
+  return true;
+}
+
 function removeNode(){
   if(readOnly) return;
+  if(marked.size >= 2) return removeMarked();
   const n = find(selected);
   if(!n || n === root) return toast("중심 주제는 지울 수 없습니다");
   if(isSummary(n)){
@@ -1263,6 +1372,8 @@ addEventListener("keydown", e => {
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="c"){ e.preventDefault(); copyNode(); return; }
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="x"){ e.preventDefault(); cutNode(); return; }
   if((e.ctrlKey||e.metaKey) && k.toLowerCase()==="v"){ e.preventDefault(); pasteNode(); return; }
+  if((e.ctrlKey||e.metaKey) && k === "ArrowUp"){   e.preventDefault(); reorderSibling(-1); return; }
+  if((e.ctrlKey||e.metaKey) && k === "ArrowDown"){ e.preventDefault(); reorderSibling(1);  return; }
   if(k === "Escape"){ closeSheets(); closePalette(); closeCtx(); closeFind(); return; }
   if(sheetOpen) return;
   if(k === "Tab"){ e.preventDefault(); addChild(); }
@@ -1295,14 +1406,20 @@ const pal = $("#palette");
 PALETTE.concat([ROOT_INK]).forEach(c => {
   const b = document.createElement("button");
   b.className = "swatch"; b.style.background = c; b.title = c;
-  b.onclick = () => { const n = find(selected); if(n){ push(); n.color = c; render(); } closePalette(); };
+  b.onclick = () => {
+    if(!colorMarked(c)){ const n = find(selected); if(n){ push(); n.color = c; render(); } }
+    closePalette();
+  };
   pal.appendChild(b);
 });
 const rst = document.createElement("button");
 rst.className = "swatch";
 rst.style.cssText = "background:transparent;border:1px dashed var(--panel-line);color:var(--ink-soft);font-size:11px";
 rst.textContent = "↺"; rst.title = "가지 색 되돌리기";
-rst.onclick = () => { const n = find(selected); if(n){ push(); n.color = null; render(); } closePalette(); };
+rst.onclick = () => {
+  if(!colorMarked(null)){ const n = find(selected); if(n){ push(); n.color = null; render(); } }
+  closePalette();
+};
 pal.appendChild(rst);
 function openPalette(btn){
   const r = btn.getBoundingClientRect();
@@ -1442,6 +1559,7 @@ function clipWrite(n){
   return true;
 }
 function copyNode(){
+  if(copyMarked()) return;                 // 여러 개 골랐으면 그쪽이 우선
   const n = find(selected); if(!n) return;
   if(clipWrite(n)) toast("복사했습니다");
 }
@@ -1458,17 +1576,23 @@ function pasteNode(){
   const target = find(selected); if(!target) return;
   let payload = null;
   try{ payload = JSON.parse(localStorage.getItem(CLIP_KEY) || "null"); }catch{}
-  if(!payload || payload.kind !== "node" || !payload.node) return toast("붙여넣을 것이 없습니다");
+  const srcList = payload.kind === "nodes" ? payload.nodes
+                : payload.kind === "node"  ? [payload.node] : null;
+  if(!srcList || !srcList.length) return toast("붙여넣을 것이 없습니다");
   if(Date.now() - (payload.at || 0) > CLIP_STALE) toast("오래된 복사본입니다");
-  // 붙여넣을 때마다 새 id를 발급하므로 여러 번 붙여도 겹치지 않는다.
-  const fresh = cloneSubtree(payload.node);
   push();
   target.collapsed = false;
-  target.children.push(fresh);
-  fresh.side = (target === root)
-    ? (root.children.filter(c=>c.side==="R").length <= root.children.filter(c=>c.side==="L").length ? "R" : "L")
-    : null;
-  selected = fresh.id;
+  let last = null;
+  for(const src of srcList){
+    // 붙여넣을 때마다 새 id를 발급하므로 여러 번 붙여도 겹치지 않는다.
+    const fresh = cloneSubtree(src);
+    fresh.side = (target === root)
+      ? (root.children.filter(c=>c.side==="R").length <= root.children.filter(c=>c.side==="L").length ? "R" : "L")
+      : null;
+    target.children.push(fresh);
+    last = fresh;
+  }
+  if(last) selected = last.id;
   render();
 }
 
