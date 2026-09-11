@@ -48,6 +48,9 @@
      자신은 제외한다 — 칸이 따라 움직이면 커서가 글자를 쫓아다니는 것처럼 보인다. */
   body.ready .node:not(.editing){transition:box-shadow .12s ease,transform .12s ease,
     left .12s var(--ease),top .12s var(--ease),width .12s var(--ease),height .12s var(--ease)}
+  /* 형제끼리 폭을 맞추면 남는 자리가 생긴다. 글자가 가운데 떠서 들쭉날쭉해 보이므로
+     일반 노드는 왼쪽으로 붙인다. 중심 주제(lv0)만 기존 가운데 정렬을 유지한다. */
+  .node:not(.lv0){justify-content:flex-start;text-align:left}
   .node.lv0{color:#fff;border-radius:14px;box-shadow:var(--shadow)}
   .node.lv1{color:#fff;box-shadow:var(--shadow)}
   .node.lvN{background:var(--chip);color:var(--ink);box-shadow:0 1px 0 var(--chip-line);border-radius:8px}
@@ -574,8 +577,31 @@ function layout(){
       y += h + VGAP;
     }
   };
+  matchSiblingWidths();        // 폭을 먼저 맞춘 뒤 배치해야 자식이 부모에 가리지 않는다
   side(R,1); side(L,-1);
   placeSummaries();
+}
+/* 같은 부모에서 뻗은 형제 묶음(단락)마다, 그 안에서 가장 넓은 노드의 폭으로 나머지를
+   맞춘다. 단락끼리는 서로 섞지 않는다 — 다른 부모 밑의 폭과 무관하게 계산한다.
+   루트의 자식은 왼쪽·오른쪽이 서로 다른 단락이다.
+   요약 노드는 children 이 아니라 summaries 에 들어 있어 자연히 묶음에서 빠지고
+   자기 폭을 유지한다. 요약의 자식들은 그들끼리 한 단락이 된다.
+   n.w 는 SKIP 집합이라 저장되지 않는 표시용 값이다. */
+function matchSiblingWidths(){
+  const unify = list => {
+    if(list.length < 2) return;
+    let max = 0;
+    for(const c of list) if(c.w > max) max = c.w;
+    for(const c of list) c.w = max;
+  };
+  walk(root, n => {
+    if(n === root){
+      unify(root.children.filter(c => c.side === "R"));
+      unify(root.children.filter(c => c.side !== "R"));
+    } else {
+      unify(n.children);
+    }
+  });
 }
 /* 노드와 그 하위 전체가 차지하는 범위 (접힌 가지는 제외) */
 function extentOf(n){
@@ -611,16 +637,33 @@ function placeSummaries(){
 }
 
 /* ===================== 그리기 ===================== */
+/* ── 가지 선 굵기 표 ──────────────────────────────────────────────
+   화면 배율 100% 기준 px, [부모 쪽, 자식 쪽]. 자식 노드의 깊이로 고른다
+   (루트의 자식 = 1단계). 앞 단계의 끝 굵기와 다음 단계의 시작 굵기를 같게 두어
+   갈래가 끊기지 않고 이어져 보인다. 숫자만 바꾸면 굵기가 조정된다.
+   선은 stroke 가 아니라 곡선 양옆으로 굵기만큼 벌린 도형을 채워(fill) 그린다.  */
+const EDGE_WIDTHS = [
+  [12, 7],    // 루트 → 1단계
+  [7,  4],    // 1단계 → 2단계
+  [4,  1.5]   // 2단계 → 3단계
+];
+const EDGE_MIN = 1.5;                       // 3단계 이후는 이 굵기를 유지
+function edgeWidth(childDepth){
+  return EDGE_WIDTHS[childDepth-1] || [EDGE_MIN, EDGE_MIN];
+}
 function taper(p,c){
   const dir = c.cx > p.cx ? 1 : -1;
   const x1 = p.cx + dir*p.w/2, y1 = p.cy;
   const x2 = c.cx - dir*c.w/2, y2 = c.cy;
   const dx = Math.abs(x2-x1)*0.5;
-  const d1 = depthOf(c.id);
-  const w1 = Math.max(2.2, 7 - d1*1.4), w2 = Math.max(1.4, w1*0.5);
+  const [w1, w2] = edgeWidth(depthOf(c.id));
   const cp1x = x1 + dir*dx, cp2x = x2 - dir*dx;
+  // 부모 쪽 끝을 반원으로 덮어 갈라지는 지점이 각지지 않게 한다.
+  // y 가 아래로 향하는 좌표계라, 아래→위로 도는 시계방향(sweep 1)이 왼쪽으로 부푼다.
+  const sweep = dir > 0 ? 1 : 0;
   return `M ${x1} ${y1-w1/2} C ${cp1x} ${y1-w1/2}, ${cp2x} ${y2-w2/2}, ${x2} ${y2-w2/2}`
-       + ` L ${x2} ${y2+w2/2} C ${cp2x} ${y2+w2/2}, ${cp1x} ${y1+w1/2}, ${x1} ${y1+w1/2} Z`;
+       + ` L ${x2} ${y2+w2/2} C ${cp2x} ${y2+w2/2}, ${cp1x} ${y1+w1/2}, ${x1} ${y1+w1/2}`
+       + ` A ${w1/2} ${w1/2} 0 0 ${sweep} ${x1} ${y1-w1/2} Z`;
 }
 /* 묶인 범위를 감싸는 괄호. dir 로 좌우가 자동 반전된다. */
 function bracketPath(sm){
