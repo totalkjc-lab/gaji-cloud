@@ -52,7 +52,9 @@
   .node.lv1{color:#fff;box-shadow:var(--shadow)}
   .node.lvN{background:var(--chip);color:var(--ink);box-shadow:0 1px 0 var(--chip-line);border-radius:8px}
   .node.sel{box-shadow:0 0 0 2px var(--paper),0 0 0 4px var(--focus)}
-  .node.editing{cursor:text;user-select:text;white-space:pre-wrap;outline:none;
+  /* 보기 상태(.node)와 같은 pre 로 둔다. pre-wrap 이면 입력 중에만 줄이 꺾여
+     편집을 끝내는 순간 모양이 튄다. */
+  .node.editing{cursor:text;user-select:text;white-space:pre;outline:none;
     background:var(--edit-bg)!important;color:var(--ink)!important;border-bottom:0!important;
     caret-color:var(--focus);
     box-shadow:0 0 0 2px var(--paper),0 0 0 4px var(--focus),0 12px 28px rgba(27,32,41,.18)!important;
@@ -353,7 +355,7 @@
 /* ===================== 기본값 ===================== */
 const PALETTE = ["#D6455C","#E2841F","#2FA37A","#2E6FD9","#8358CE","#C0357E","#0E9BA6","#7A8B2E"];
 const ROOT_INK = "#1D1D1F";
-const HGAP = 58, VGAP = 14, MAXW = 200;
+const HGAP = 58, VGAP = 14;
 const SUM_GAP = 34, BRACKET = 12;   // 요약 노드까지의 간격, 괄호 폭
 // layout scratch fields stamped onto nodes by measure()/place(); never persist these
 const SKIP = new Set(["_lines","_st","w","h","cx","cy","dir","_sum","_owner","_top","_bot"]);
@@ -471,23 +473,16 @@ function styleOf(depth){
   if(depth===1) return { size:15, weight:600, padX:15, padY:10, cls:"lv1" };
   return { size:14, weight:500, padX:12, padY:8, cls:"lvN" };
 }
-function wrap(text, st){
-  mc.font = `${st.weight} ${st.size}px ${getComputedStyle(document.body).fontFamily}`;
-  const out = [];
-  for(const para of String(text).split("\n")){
-    if(mc.measureText(para).width <= MAXW){ out.push(para); continue; }
-    let line = "";
-    for(const ch of para){
-      if(mc.measureText(line+ch).width > MAXW && line){ out.push(line); line = ch; }
-      else line += ch;
-    }
-    out.push(line);
-  }
-  return out.length ? out : [""];
+/* 줄은 사용자가 엔터 친 자리에서만 나눈다. 폭 기준 자동 분할은 하지 않는다 —
+   긴 글이 옆으로 길어지는 것은 사용자가 정할 일이다. */
+function wrap(text){
+  return String(text).split("\n");
 }
 function measure(n, depth){
   const st = styleOf(depth);
-  const lines = wrap(n.text || " ", st);
+  // 글자 폭을 재려면 캔버스 폰트를 먼저 맞춰야 한다 (예전에는 wrap 이 겸했다).
+  mc.font = `${st.weight} ${st.size}px ${getComputedStyle(document.body).fontFamily}`;
+  const lines = wrap(n.text || " ");
   let w = 0;
   for(const l of lines) w = Math.max(w, mc.measureText(l).width);
   n._lines = lines; n._st = st;
